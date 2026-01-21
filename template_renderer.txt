@@ -1,0 +1,91 @@
+# template_renderer.py
+
+from typing import Dict, Any, List, Optional
+from docxtpl import DocxTemplate
+from docx import Document
+from docx.shared import Cm, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from logger import logger
+from file_utils import temp_docx
+
+def build_context(
+    ctx_fields: Dict[str, str],
+    rooms: List[Dict[str, str]],
+    tests_placeholder: str = "{{TABLE}}"
+) -> Dict[str, Any]:
+    """
+    Собирает словарь для подстановки в шаблон:
+      - ctx_fields: базовые поля (названия, даты и т.д.)
+      - rooms: список лабораторий/помещений
+      - tests_placeholder: плейсхолдер, куда вставляется таблица
+    """
+    ctx = ctx_fields.copy()
+    ctx.update({
+        "rooms": rooms,
+        "TABLE": tests_placeholder
+    })
+    logger.debug("Контекст для Jinja собран")
+    return ctx
+
+def render_template(
+    tpl_path: str,
+    context: Dict[str, Any],
+    out_path: Optional[str] = None
+) -> Document:
+    """
+    Рендерит DOCX-шаблон и возвращает python-docx Document.
+    Если out_path указан — сразу сохраняет туда и возвращает результат.
+    Иначе сохраняет во временный файл, делает пост-обработку нужной таблицы
+    (ширины, выравнивание шапки и т.д.) и возвращает Document.
+    """
+    tpl = DocxTemplate(tpl_path)
+    tpl.render(context)
+
+    # Вариант «сохранить сразу, без пост-обработки таблиц»
+    if out_path:
+        tpl.save(out_path)
+        logger.info(f"Шаблон отререндерен и сохранён в {out_path}")
+        return Document(out_path)
+
+    # Иначе — сохраняем во временный файл, пост-обрабатываем только «Таблицу 4»
+    with temp_docx() as tmp:
+        tpl.save(tmp)
+        doc = Document(tmp)
+
+        # Ищем таблицу, у которой в первой ячейке заголовка есть «Наименование»
+        target = None
+        for tbl in doc.tables:
+            if tbl.rows and tbl.rows[0].cells and "Наименование" in tbl.rows[0].cells[0].text:
+                target = tbl
+                break
+
+        if target:
+            # фиксируем ширины колонок
+            target.autofit = False
+            widths = [Cm(6.08), Cm(4.63), Cm(4.63), Cm(4.63)]
+            for col, w in zip(target.columns, widths):
+                for cell in col.cells:
+                    cell.width = w
+
+            # шапка: центрируем и сбрасываем отступы
+            for cell in target.rows[0].cells:
+                for p in cell.paragraphs:
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.left_indent = Pt(0)
+                    p.paragraph_format.first_line_indent = Pt(0)
+
+            # вторая строка: по ширине, без отступов, межстрочный 1.1
+            for cell in target.rows[1].cells:
+                for p in cell.paragraphs:
+                    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.left_indent = Pt(0)
+                    p.paragraph_format.first_line_indent = Pt(0)
+                    p.paragraph_format.line_spacing = 1.1
+
+            logger.info("Таблица 4 отформатирована")
+        else:
+            logger.warning("Таблица 4 не найдена — пропускаем пост-обработку")
+
+        return doc
