@@ -33,26 +33,6 @@ import table_processor
 from logger import logger
 import word_table5_splitter
 
-def repair_win32com_cache() -> None:
-    """
-    Чинит битый кеш pywin32 (gen_py), который даёт:
-      ... has no attribute CLSIDToClassMap
-    """
-    try:
-        import win32com.client as win32
-        _ = win32.constants.wdPageBreak  # если работает — кеш живой
-        return
-    except Exception:
-        pass
-
-    import shutil
-    import tempfile
-    from pathlib import Path
-    import win32com.client.gencache as gencache
-
-    shutil.rmtree(gencache.GetGeneratePath(), ignore_errors=True)
-    shutil.rmtree(Path(tempfile.gettempdir()) / "gen_py", ignore_errors=True)
-    gencache.Rebuild()
 
 # ===================== Spreadsheet-like table =====================
 class SpreadsheetTable(QTableWidget):
@@ -648,12 +628,93 @@ class AppendixImagesDialog(QDialog):
     def get_paths(self) -> list[str]:
         return self.list.get_paths()
 
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
+def _cell_center_no_indent(cell):
+    """
+    Делает:
+      - текст без табов/неразрывных пробелов
+      - выравнивание по центру
+      - убирает абзацные отступы
+      - убирает внутренние поля ячейки (tcMar), которые обычно и дают "сдвиг"
+      - фиксирует jc=center на уровне XML (чтобы стиль не перебил)
+    """
+    import re
+
+    txt = (cell.text or "")
+    txt = txt.replace("\t", "").replace("\u00A0", " ")
+    txt = re.sub(r"\s+\n", "\n", txt)
+    txt = re.sub(r"\n\s+", "\n", txt)
+    txt = txt.strip()
+
+    # ВАЖНО: text пересоздаёт абзацы -> форматируем уже после
+    cell.text = txt
+
+    # абзацы: центр + без отступов/таба
+    for p in cell.paragraphs:
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        pf = p.paragraph_format
+        pf.left_indent = 0
+        pf.right_indent = 0
+        pf.first_line_indent = 0
+        pf.space_before = 0
+        pf.space_after = 0
+
+        pPr = p._p.get_or_add_pPr()
+
+        # убрать tabs
+        tabs = pPr.find(qn("w:tabs"))
+        if tabs is not None:
+            pPr.remove(tabs)
+
+        # убрать ind
+        ind = pPr.find(qn("w:ind"))
+        if ind is not None:
+            pPr.remove(ind)
+
+        # жёстко: center в XML
+        jc = pPr.find(qn("w:jc"))
+        if jc is None:
+            jc = OxmlElement("w:jc")
+            pPr.append(jc)
+        jc.set(qn("w:val"), "center")
+
+    # убрать внутренние поля ячейки (это то, что чаще всего визуально мешает "центру")
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcMar = tcPr.find(qn("w:tcMar"))
+    if tcMar is None:
+        tcMar = OxmlElement("w:tcMar")
+        tcPr.append(tcMar)
+
+    def _set_mar(tag: str):
+        el = tcMar.find(qn(f"w:{tag}"))
+        if el is None:
+            el = OxmlElement(f"w:{tag}")
+            tcMar.append(el)
+        el.set(qn("w:w"), "0")
+        el.set(qn("w:type"), "dxa")
+
+    _set_mar("left")
+    _set_mar("right")
+
+    # опционально: вертикальный центр
+    vAlign = tcPr.find(qn("w:vAlign"))
+    if vAlign is None:
+        vAlign = OxmlElement("w:vAlign")
+        tcPr.append(vAlign)
+    vAlign.set(qn("w:val"), "center")
 
 # === Автозаполнение "Тест 11.2. Проверка кратности воздухообмена в ЧП" ===
 def _fill_test_112(doc, rooms):
+    import re
+
     def norm(s: str) -> str:
         return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
 
+    # 1) находим таблицу теста 11.2
     t112 = None
     for t in doc.tables:
         if not t.rows:
@@ -666,21 +727,32 @@ def _fill_test_112(doc, rooms):
     if t112 is None:
         return
 
+    # 2) находим строку, где начинаются названия колонок (после "Результаты испытания")
     hdr_cols_row_idx = None
     for i, row in enumerate(t112.rows):
-        # тут обычно merge'ей нет; оставляем как было
         line = norm(" ".join(c.text for c in row.cells))
         if "результаты испытани" in line:
             hdr_cols_row_idx = i + 1 if (i + 1) < len(t112.rows) else None
             break
+
     if hdr_cols_row_idx is None:
         for i, row in enumerate(t112.rows):
             line = norm(" ".join(c.text for c in row.cells))
             if ("номер" in line and "объем" in line) or ("общий расход" in line):
                 hdr_cols_row_idx = i
                 break
+
     if hdr_cols_row_idx is None:
         return
+
+    # 3) ВАЖНО: из-за merge/gridSpan "Общий расход" может встречаться несколько раз.
+    def find_cols(cells, *needles):
+        out = []
+        for ci, c in enumerate(cells):
+            tt = norm(c.text)
+            if all(n in tt for n in needles):
+                out.append(ci)
+        return out
 
     def find_col(cells, *needles):
         for ci, c in enumerate(cells):
@@ -690,22 +762,23 @@ def _fill_test_112(doc, rooms):
         return None
 
     cols_row = t112.rows[hdr_cols_row_idx]
-    col_total = find_col(cols_row.cells, "общий", "расход")
+    col_totals = find_cols(cols_row.cells, "общий", "расход")     # <-- список
     col_fact = find_col(cols_row.cells, "фактическ")
-    if col_total is None and col_fact is None:
+
+    if not col_totals and col_fact is None:
         return
 
+    # 4) Удаляем "пустую строку" от docxtpl (строка где был отдельный {% for %})
     def is_spacer(row):
         return all(norm(c.text) in ("", "¤") for c in row.cells)
 
-    # В таблице 11.2 шапка занимает 2 строки (строка заголовков + строка подзаголовков)
+    # Шапка занимает 2 строки: заголовки + подзаголовки
     data_start = hdr_cols_row_idx + 2
 
-    # docxtpl оставляет пустой tr там, где был отдельной строкой "{% for room in rooms %}"
-    # Его нужно УДАЛИТЬ из таблицы, иначе Word показывает "пустую строку".
     while data_start < len(t112.rows) and is_spacer(t112.rows[data_start]):
-        t112._tbl.remove(t112.rows[data_start]._tr)  # <- удаляем строку, а не сдвигаем индекс
+        t112._tbl.remove(t112.rows[data_start]._tr)
 
+    # 5) граница данных - до "КОММЕНТАРИИ"
     data_end = len(t112.rows)
     for i in range(data_start, len(t112.rows)):
         first_cell = norm(t112.rows[i].cells[0].text)
@@ -715,6 +788,7 @@ def _fill_test_112(doc, rooms):
     if data_end <= data_start:
         return
 
+    # 6) если помещений больше, чем строк - дополняем копиями последней строки данных
     need = len(rooms)
     have = data_end - data_start
     if need > have:
@@ -724,18 +798,37 @@ def _fill_test_112(doc, rooms):
             t112._tbl.append(deepcopy(sample_tr))
         data_end = data_start + need
 
+    # 7) заполняем
     for idx, room in enumerate(rooms):
         r = data_start + idx
         if r >= len(t112.rows):
             break
+
         row = t112.rows[r]
         total_flow = (room.get("total_flow") or "").strip()
         exch_act = (room.get("exchange_actual") or "").strip()
 
-        if col_total is not None and col_total < len(row.cells) and total_flow:
-            row.cells[col_total].text = total_flow
+        # общий расход: записываем (если есть) и ВСЕГДА форматируем все найденные колонки
+        for ci in col_totals:
+            if ci < len(row.cells):
+                cell = row.cells[ci]
+                if total_flow:
+                    cell.text = total_flow
+                _cell_center_no_indent(cell)
+
+        # фактическая: заполняем как было
         if col_fact is not None and col_fact < len(row.cells) and exch_act:
             row.cells[col_fact].text = exch_act
+
+
+
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+import re
+
+
+
 
 
 # ===================== DOCX equipment date postprocess =====================
@@ -853,364 +946,27 @@ def postprocess_equipment_dates(doc) -> None:
                 cell.text = new
 
 
-# def update_fields_only_with_word(docx_path: str) -> None:
-#     """Обновляет поля Word (NUMPAGES и т.п.) через COM. Требует pywin32 и MS Word."""
-#     import win32com.client as win32
-#
-#     word = win32.gencache.EnsureDispatch("Word.Application")
-#     word.Visible = False
-#     try:
-#         doc = word.Documents.Open(str(docx_path))
-#         doc.Repaginate()
-#         doc.Fields.Update()
-#         for sec in doc.Sections:
-#             sec.Headers(1).Range.Fields.Update()
-#             sec.Footers(1).Range.Fields.Update()
-#         doc.Save()
-#         doc.Close()
-#     finally:
-#         word.Quit()
-#
-#     import shutil
-#     import tempfile
-#     from pathlib import Path
-#
-#     import win32com.client.gencache as gencache
-#
-#     # 1) Удаляем кеш makepy (основной)
-#     shutil.rmtree(gencache.GetGeneratePath(), ignore_errors=True)
-#
-#     # 2) Часто pywin32 ещё кладёт кеш сюда
-#     shutil.rmtree(Path(tempfile.gettempdir()) / "gen_py", ignore_errors=True)
-#
-#     # 3) Пересобираем кеш
-#     gencache.Rebuild()
-#
-#     # 4) Прогреваем Word COM
-#     import win32com.client as win32
-#     w = win32.gencache.EnsureDispatch("Word.Application")
-#     w.Quit()
-#     print("OK")
+def update_fields_only_with_word(docx_path: str) -> None:
+    """Обновляет поля Word (NUMPAGES и т.п.) через COM. Требует pywin32 и MS Word."""
+    import win32com.client as win32
+
+    word = win32.gencache.EnsureDispatch("Word.Application")
+    word.Visible = False
+    try:
+        doc = word.Documents.Open(str(docx_path))
+        doc.Repaginate()
+        doc.Fields.Update()
+        for sec in doc.Sections:
+            sec.Headers(1).Range.Fields.Update()
+            sec.Footers(1).Range.Fields.Update()
+        doc.Save()
+        doc.Close()
+    finally:
+        word.Quit()
 
 
 # ===================== Render Worker =====================
-class RenderWorker(QThread):
-    progress = Signal(int, str)
-    finished = Signal(bool, str, list)
 
-    def __init__(
-        self,
-        tpl_path: str,
-        tests_doc_path: str,
-        xls_tests_path: str,
-        xls_eq_path: str,
-        out_path: str,
-        selected_tests: list[str],
-        rooms: list[dict],
-        equipment: list[dict],
-        ctx_fields: dict,
-        *,
-        scans_dir: str,
-        app1_images: list[str],
-        app4_images: list[str],
-    ):
-        super().__init__()
-        self.tpl_path = tpl_path
-        self.tests_doc_path = tests_doc_path
-        self.xls_tests_path = xls_tests_path
-        self.xls_eq_path = xls_eq_path
-        self.out_path = out_path
-        self.selected_tests = selected_tests
-        self.rooms = rooms
-        self.equipment = equipment
-        self.ctx_fields = ctx_fields
-        self.scans_dir = scans_dir
-        self.app1_images = app1_images or []
-        self.app4_images = app4_images or []
-
-    def run(self):
-        missing: list[str] = []
-        try:
-            step = 0
-            self.progress.emit(step, "Валидация файлов…")
-            io_manager.validate_file(Path(self.tpl_path))
-            io_manager.validate_file(Path(self.tests_doc_path))
-            io_manager.validate_file(Path(self.xls_tests_path))
-            io_manager.validate_file(Path(self.xls_eq_path))
-            Path(self.out_path).parent.mkdir(parents=True, exist_ok=True)
-
-            step += 1
-            self.progress.emit(step, "Сбор контекста…")
-            context = template_renderer.build_context(self.ctx_fields, self.rooms)
-
-            step += 1
-            self.progress.emit(step, "Сбор сканов оборудования…")
-            scan_paths: list[str] = []
-
-            def _serial_key(s: str) -> str:
-                return re.sub(r'[^0-9a-zA-Z]+', '', (s or '')).lower()
-
-            if self.equipment and self.scans_dir:
-                for eq in self.equipment:
-                    name_sn = eq.get("name_sn", "")
-                    try:
-                        _, serial = [p.strip() for p in name_sn.rsplit(",", 1)]
-                    except ValueError:
-                        serial = name_sn.strip()
-
-                    key = _serial_key(serial)
-                    found = None
-                    for root, _, files in os.walk(self.scans_dir):
-                        for fn in files:
-                            if Path(fn).suffix.lower() not in (".jpg", ".jpeg", ".png", ".pdf", ".bmp", ".gif", ".tif", ".tiff"):
-                                continue
-                            if _serial_key(Path(fn).stem) == key:
-                                found = os.path.join(root, fn)
-                                break
-                        if found:
-                            scan_paths.append(found)
-                            break
-
-            if scan_paths:
-                context["Scan_paths"] = scan_paths
-
-            step += 1
-            self.progress.emit(step, "Рендер тестового документа…")
-            tpl_tests = DocxTemplate(self.tests_doc_path)
-            tpl_tests.render(context)
-
-            with temp_docx() as tmp_tests_path:
-                tpl_tests.save(tmp_tests_path)
-                tests_doc_parsed = Document(tmp_tests_path)
-
-                def _safe_row_cell_texts(row) -> list[str]:
-                    """
-                    Безопасно возвращает тексты ячеек строки.
-                    row.cells иногда падает на таблицах с вертикальными merge'ами.
-                    """
-                    try:
-                        return [c.text for c in row.cells]
-                    except Exception:
-                        tcs = row._tr.xpath("./w:tc")
-                        out: list[str] = []
-                        for tc in tcs:
-                            parts = tc.xpath(".//w:t")
-                            out.append("".join((p.text or "") for p in parts))
-                        return out
-
-                def _robust_extract_total_flows_from_test11(docx_doc):
-                    flows: list[Decimal | None] = []
-
-                    def norm(s: str) -> str:
-                        return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
-
-                    def to_dec(s: str) -> Decimal | None:
-                        s = (s or "").strip().replace("\u00a0", "").replace(" ", "").replace(",", ".")
-                        try:
-                            return Decimal(s)
-                        except InvalidOperation:
-                            return None
-
-                    for t in docx_doc.tables:
-                        if not t.rows:
-                            continue
-
-                        head = " ".join(_safe_row_cell_texts(t.rows[0]))
-                        h = norm(head)
-
-                        if "проверка" in h and "расхода" in h and "приточ" in h:
-                            hdr_idx = None
-                            for i, row in enumerate(t.rows):
-                                row_text = norm(" ".join(_safe_row_cell_texts(row)))
-                                if "результаты испытани" in row_text:
-                                    hdr_idx = i + 1 if (i + 1) < len(t.rows) else None
-                                    break
-                            if hdr_idx is None:
-                                continue
-
-                            rows_for_header = [t.rows[hdr_idx]]
-                            if hdr_idx + 1 < len(t.rows):
-                                rows_for_header.append(t.rows[hdr_idx + 1])
-
-                            def col_idx(*needles):
-                                for row in rows_for_header:
-                                    cells_txt = _safe_row_cell_texts(row)
-                                    for ci, txt in enumerate(cells_txt):
-                                        tt = norm(txt)
-                                        if all(n in tt for n in needles):
-                                            return ci
-                                return None
-
-                            col_fact = col_idx("фактическ")
-                            col_sum = col_idx("фактическ", "суммарн")
-
-                            cur_sum: Decimal | None = None
-                            room_started = False
-                            data_start = hdr_idx + (2 if len(rows_for_header) == 2 else 1)
-
-                            for r in range(data_start, len(t.rows)):
-                                row = t.rows[r]
-                                cells_txt = _safe_row_cell_texts(row)
-                                row_text = norm(" ".join(cells_txt))
-
-                                if row_text.startswith("комментар"):
-                                    if room_started:
-                                        flows.append(cur_sum)
-                                    break
-
-                                if row_text.startswith("помещение"):
-                                    if room_started:
-                                        flows.append(cur_sum)
-                                    room_started = True
-                                    cur_sum = None
-                                    continue
-
-                                if not room_started:
-                                    continue
-
-                                if col_sum is not None and col_sum < len(cells_txt):
-                                    v = to_dec(cells_txt[col_sum])
-                                    if v is not None:
-                                        cur_sum = v
-                                        continue
-
-                                if col_fact is not None and col_fact < len(cells_txt):
-                                    v = to_dec(cells_txt[col_fact])
-                                    if v is not None:
-                                        cur_sum = (cur_sum or Decimal("0")) + v
-
-                            if room_started:
-                                flows.append(cur_sum)
-
-                    return flows
-
-                _total1 = table_processor.extract_total_flows_from_test11(tests_doc_parsed)
-                total_flows = (
-                    _total1 if (_total1 and any(v is not None for v in _total1))
-                    else _robust_extract_total_flows_from_test11(tests_doc_parsed)
-                )
-
-                for idx, room in enumerate(self.rooms):
-                    if idx < len(total_flows) and total_flows[idx] is not None:
-                        val = total_flows[idx].quantize(Decimal("1.00"))
-                        room["total_flow"] = f"{val}".replace(".", ",")
-                    else:
-                        pr = (room.get("airflow") or "").strip().replace(" ", "").replace("\u00a0", "")
-                        pr = pr.replace(".", ",")
-                        try:
-                            q = Decimal(pr.replace(",", ".")).quantize(Decimal("1.00"))
-                            room["total_flow"] = f"{q}".replace(".", ",")
-                        except InvalidOperation:
-                            room["total_flow"] = pr or ""
-
-                    vol_raw = (room.get("volume") or "").replace(",", ".")
-                    try:
-                        vol = Decimal(vol_raw)
-                        tf_raw = (room.get("total_flow") or "").replace(",", ".")
-                        tf = Decimal(tf_raw) if tf_raw else None
-                        if vol and vol > 0 and tf is not None:
-                            exch = tf / vol
-                            room["exchange_actual"] = str(exch.quantize(Decimal("1.00"))).replace(".", ",")
-                        else:
-                            room["exchange_actual"] = ""
-                    except (InvalidOperation, ZeroDivisionError):
-                        room["exchange_actual"] = ""
-
-                context = template_renderer.build_context(self.ctx_fields, self.rooms)
-                if scan_paths:
-                    context["Scan_paths"] = scan_paths
-
-                step += 1
-                self.progress.emit(step, "Перерендер тестовых таблиц с расчётами…")
-                tpl_tests2 = DocxTemplate(self.tests_doc_path)
-                tpl_tests2.render(context)
-                tpl_tests2.save(tmp_tests_path)
-
-                step += 1
-                self.progress.emit(step, "Рендер основного шаблона…")
-                tpl_main = DocxTemplate(self.tpl_path)
-
-                def _make_inline_images(paths: list[str], label: str) -> list[InlineImage]:
-                    out: list[InlineImage] = []
-                    for p in (paths or []):
-                        pp = Path(p)
-                        ext = pp.suffix.lower()
-
-                        if not pp.exists():
-                            logger.warning(f"[{label}] файл не найден: {p}")
-                            continue
-
-                        if ext not in DOCX_IMG_EXT:
-                            logger.warning(f"[{label}] пропущен неподдерживаемый формат {ext}: {p}")
-                            continue
-
-                        try:
-                            out.append(InlineImage(tpl_main, str(pp), width=Mm(160)))
-                        except UnrecognizedImageError:
-                            logger.warning(f"[{label}] UnrecognizedImageError (битый/не картинка): {p}")
-                        except Exception as e:
-                            logger.warning(f"[{label}] не удалось вставить {p}: {e}")
-
-                    return out
-
-                context["App1Scans"] = _make_inline_images(self.app1_images, "Приложение 1")
-                context["App4Scans"] = _make_inline_images(self.app4_images, "Приложение 4")
-
-                scans_img_paths: list[str] = []
-                for p in scan_paths:
-                    pp = Path(p)
-                    if pp.exists() and pp.suffix.lower() in DOCX_IMG_EXT:
-                        scans_img_paths.append(str(pp))
-                    else:
-                        logger.warning(f"[Приложение 2] пропущен (неподдерживаемый/не найден/PDF/TIFF): {p}")
-
-                context["Scans"] = _make_inline_images(scans_img_paths, "Приложение 2")
-
-                tpl_main.render(context)
-
-                with temp_docx() as tmp_main_path:
-                    tpl_main.save(tmp_main_path)
-                    doc = Document(tmp_main_path)
-
-                    step += 1
-                    self.progress.emit(step, "Обработка таблицы помещений…")
-                    table_processor.process_rooms_table(doc, self.rooms)
-
-                    step += 1
-                    self.progress.emit(step, "Обработка таблицы оборудования…")
-                    table_processor.process_equipment_table(doc, self.equipment)
-
-                    postprocess_equipment_dates(doc)
-
-                    step += 1
-                    self.progress.emit(step, "Вставка тестовых таблиц…")
-                    missing = table_processor.insert_test_tables(doc, tmp_tests_path, self.selected_tests)
-
-                    step += 1
-                    self.progress.emit(step, "Заполнение результатов тестов…")
-                    table_processor.process_test_results_tables(doc, self.rooms)
-
-                    _fill_test_112(doc, self.rooms)
-
-                    step += 1
-                    self.progress.emit(step, "Унификация шрифта…")
-                    table_processor.enforce_tnr_face_only_everywhere(doc)
-
-                    step += 1
-                    self.progress.emit(step, "Сохранение…")
-                    doc.save(self.out_path)
-
-                try:
-                    repair_win32com_cache()
-                    word_table5_splitter.update_fields_with_word(self.out_path)
-                except Exception as e:
-                    logger.warning(f"Не удалось обновить поля/разрезать таблицу 5 через Word: {e}")
-
-            self.finished.emit(True, f"Документ сохранён:\n{self.out_path}", missing)
-
-        except Exception as e:
-            logger.exception("Ошибка в RenderWorker:")
-            self.finished.emit(False, str(e), [])
 
 
 # ===================== Main Window =====================
@@ -1746,6 +1502,162 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+from PySide6.QtWidgets import QMainWindow, QLabel
+from PySide6.QtCore import Qt
+
+class OldCleanroomWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Старый режим — Чистые помещения")
+        label = QLabel("Режим чистых помещений пока реализован в старом виде.")
+        label.setAlignment(Qt.AlignCenter)
+        self.setCentralWidget(label)
+
+
+def launch_old_app():
+    return OldCleanroomWindow()
+
+
+# ui/rooms_table.py  (новый файл)
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QApplication
+from PySide6.QtCore import Qt
+
+class SpreadsheetTable(QTableWidget):
+    """
+    QTableWidget с excel-копипастой:
+      • Ctrl+C — копирует текущее выделение как TSV
+      • Ctrl+V — вставляет прямоугольный блок (TSV/CSV/строки)
+      • если нет выделения — работаем от (0,0)
+      • автоматически добавляет недостающие строки
+    """
+    def keyPressEvent(self, e):
+        ctrl = e.modifiers() & Qt.ControlModifier
+        if ctrl and e.key() == Qt.Key_C:
+            self._copy_selection_to_clipboard()
+            return
+        if ctrl and e.key() == Qt.Key_V:
+            self._paste_from_clipboard()
+            return
+        super().keyPressEvent(e)
+
+    # --- helpers ---
+    def _copy_selection_to_clipboard(self):
+        rngs = self.selectedRanges()
+        if rngs:
+            r = rngs[0]
+            rows = range(r.topRow(), r.bottomRow() + 1)
+            cols = range(r.leftColumn(), r.rightColumn() + 1)
+        else:
+            # нет выделения — копируем всё содержимое
+            rows = range(0, self.rowCount())
+            cols = range(0, self.columnCount())
+
+        lines = []
+        for i in rows:
+            vals = []
+            for j in cols:
+                it = self.item(i, j)
+                vals.append("" if it is None else it.text())
+            lines.append("\t".join(vals))
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def _paste_from_clipboard(self):
+        text = QApplication.clipboard().text()
+        if not text:
+            return
+
+        # поддержка TSV/CSV
+        rows_data = [
+            [c.strip() for c in row.replace(";", "\t").split("\t")]
+            for row in text.splitlines()
+            if row.strip() != ""
+        ]
+        if not rows_data:
+            return
+
+        # точка вставки — левый верх выделения, иначе (0,0)
+        rngs = self.selectedRanges()
+        start_row = rngs[0].topRow() if rngs else 0
+        start_col = rngs[0].leftColumn() if rngs else 0
+
+        needed_rows = start_row + len(rows_data)
+        if self.rowCount() < needed_rows:
+            self.setRowCount(needed_rows)
+
+        needed_cols = start_col + max(len(r) for r in rows_data)
+        if self.columnCount() < needed_cols:
+            self.setColumnCount(needed_cols)
+
+        for i, row_vals in enumerate(rows_data):
+            for j, val in enumerate(row_vals):
+                r = start_row + i
+                c = start_col + j
+                it = self.item(r, c)
+                if it is None:
+                    it = QTableWidgetItem()
+                    self.setItem(r, c, it)
+                it.setText(val)
+
+
+# ui/startup_dialog.py
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton
+
+class StartupDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Выберите режим работы")
+        self.resize(300, 150)
+        self.choice = None
+
+        layout = QVBoxLayout(self)
+
+        btn_eq = QPushButton("Оборудование")
+        btn_cr = QPushButton("Чистые помещения")
+
+        btn_eq.clicked.connect(lambda: self._select("equipment"))
+        btn_cr.clicked.connect(lambda: self._select("cleanrooms"))
+
+        layout.addWidget(btn_eq)
+        layout.addWidget(btn_cr)
+
+    def _select(self, choice):
+        self.choice = choice
+        self.accept()
+
+    def get_choice(self):
+        return self.choice
+
+
+from PySide6.QtWidgets import QApplication
+
+def apply_compact_style(app: QApplication) -> None:
+    app.setStyle("Fusion")
+    app.setStyleSheet("""
+        QWidget { font-size: 10pt; }
+        QLineEdit, QComboBox, QDateEdit {
+            padding: 5px 8px;
+            border-radius: 6px;
+        }
+        QPushButton {
+            padding: 6px 10px;
+            border-radius: 6px;
+        }
+        QToolButton {
+            padding: 4px 6px;
+            border-radius: 6px;
+        }
+        QGroupBox {
+            margin-top: 10px;
+            font-weight: 600;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+        }
+    """)
 
 
 

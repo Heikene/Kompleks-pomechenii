@@ -26,23 +26,6 @@ from logger import logger
 
 
 # ------------------------------- helpers -------------------------------
-def _force_print_layout(word_app, word_doc, c) -> None:
-    """
-    Без Print Layout у Word часто ломается Information(wdActiveEndAdjustedPageNumber),
-    и мы не можем определить страницы.
-    """
-    try:
-        word_app.ActiveWindow.View.Type = c.wdPrintView
-        word_app.ActiveWindow.View.SeekView = c.wdSeekMainDocument
-    except Exception:
-        # Иногда ActiveWindow недоступен в headless-режиме — тогда просто игнорируем.
-        pass
-
-    # Просим Word пересчитать разметку
-    try:
-        word_doc.Repaginate()
-    except Exception:
-        pass
 
 def _norm_basic(s: str) -> str:
     s = "" if s is None else str(s)
@@ -271,14 +254,6 @@ def _ensure_paragraph_between_tables(word_doc, table_a, table_b, c) -> None:
 def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -> bool:
     """
     Делит Таблицу 5 в ОТКРЫТОМ Word-документе (win32com), если она занимает > 1 страницы.
-    Делает:
-      - SplitTable по фактическому переносу на новую страницу
-      - вставляет разрыв страницы
-      - вставляет "Продолжение таблицы 5" (выравнивание вправо, TNR 12 bold)
-      - вставляет ПОЛНУЮ шапку (первые header_rows строк) перед продолжением и склеивает
-      - удаляет пустой абзац между вставленной шапкой и таблицей-продолжением
-      - не даёт таблице-легенде прилипнуть к продолжению
-
     Возвращает True, если было выполнено разделение, иначе False.
     """
     try:
@@ -297,10 +272,7 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
 
     # защита от повторного запуска
     try:
-        after_text = word_doc.Range(
-            int(tbl.Range.End),
-            min(int(tbl.Range.End) + 8000, int(word_doc.Content.End))
-        ).Text
+        after_text = word_doc.Range(tbl.Range.End, min(tbl.Range.End + 8000, word_doc.Content.End)).Text
         if re.search(r"продолжение\s+таблицы\s*5", after_text, flags=re.IGNORECASE):
             logger.info("Table5 split: продолжение уже есть — пропускаем.")
             return False
@@ -313,13 +285,8 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
     except Exception:
         pass
 
-    # Пересчёт пагинации
-    try:
-        word_doc.Repaginate()
-    except Exception:
-        pass
+    word_doc.Repaginate()
 
-    # ------------------- helpers for page detection -------------------
     def _page_at(pos: int) -> Optional[int]:
         try:
             r = word_doc.Range(pos, pos)
@@ -383,13 +350,9 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
         rp_start = _row_start_page(tbl, r)
         if rp_start is None:
             continue
-
-        # строка началась на следующей странице
         if rp_start > start_page:
             split_row_idx = r
             break
-
-        # строка разорвалась пополам (начало/конец на разных страницах)
         rp_end = _row_end_page(tbl, r)
         if rp_end is not None and rp_end > rp_start:
             split_row_idx = r
@@ -428,46 +391,24 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
         logger.warning(f"Table5 split: SplitTable не сработал: {e}")
         return False
 
-    # =====================================================================
-    # 2.1) Получаем вторую таблицу (продолжение) и вставляем ПЕРЕД ней:
-    #      page break + "Продолжение таблицы 5"
-    # =====================================================================
-    try:
-        word_doc.Repaginate()
-    except Exception:
-        pass
-
-    try:
-        tbl2 = _get_first_table_after_pos(word_doc, int(tbl.Range.End))
-        if tbl2 is None:
-            logger.warning("Table5 split: после SplitTable не нашли вторую таблицу.")
-            return False
-    except Exception as e:
-        logger.warning(f"Table5 split: не удалось получить вторую таблицу после SplitTable: {e}")
-        return False
-
-    try:
-        # курсор на начало tbl2
-        sel.SetRange(int(tbl2.Range.Start), int(tbl2.Range.Start))
-        sel.Collapse(c.wdCollapseStart)
-
-        # выйти из таблицы в абзац ПЕРЕД tbl2
-        for _ in range(500):
+    # выйти из таблицы к разделяющему абзацу
+    for _ in range(2000):
+        try:
             if not sel.Information(c.wdWithInTable):
                 break
-            sel.MoveLeft(Unit=c.wdCharacter, Count=1)
+            sel.MoveRight(Unit=c.wdCharacter, Count=1)
+        except Exception:
+            break
 
-        # если всё ещё внутри таблицы — создаём абзац перед таблицей
-        if sel.Information(c.wdWithInTable):
-            r0 = word_doc.Range(int(tbl2.Range.Start), int(tbl2.Range.Start))
-            r0.InsertBefore("\r")
-            sel.SetRange(int(tbl2.Range.Start) - 1, int(tbl2.Range.Start) - 1)
-            sel.Collapse(c.wdCollapseStart)
-
-        # разрыв страницы
+    # разрыв страницы
+    try:
         sel.InsertBreak(Type=c.wdPageBreak)
+    except Exception as e:
+        logger.warning(f"Table5 split: не удалось вставить разрыв страницы: {e}")
+        return False
 
-        # "Продолжение таблицы 5"
+    # "Продолжение таблицы 5"
+    try:
         if caption_style is not None:
             try:
                 sel.Style = caption_style
@@ -480,19 +421,27 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
         sel.Font.Name = "Times New Roman"
         sel.Font.Size = 12
         sel.Font.Bold = True
+
         sel.TypeText("Продолжение таблицы 5")
         sel.TypeParagraph()
         sel.Font.Bold = False
-
     except Exception as e:
-        logger.warning(f"Table5 split: не удалось вставить page break/заголовок продолжения: {e}")
-        return False
+        logger.warning(f"Table5 split: не удалось вставить/оформить 'Продолжение таблицы 5': {e}")
 
     # =====================================================================
-    # 3) Вставляем перед tbl2 ШАПКУ и СКЛЕИВАЕМ с tbl2, убирая пустой абзац
+    # 3) Находим нижнюю таблицу (продолжение) и вставляем перед ней ШАПКУ
     # =====================================================================
     try:
-        # курсор на начало tbl2 (после вставки разрыва и заголовка позиция могла измениться)
+        tbl2 = _get_first_table_after_pos(word_doc, int(sel.Range.End))
+        if tbl2 is None:
+            logger.warning("Table5 split: после 'Продолжение таблицы 5' не нашли таблицу.")
+            return False
+    except Exception as e:
+        logger.warning(f"Table5 split: не удалось получить продолжение таблицы: {e}")
+        return False
+
+    try:
+        # курсор на начало tbl2
         insert_pos = int(tbl2.Range.Start)
         sel.SetRange(insert_pos, insert_pos)
         sel.Collapse(c.wdCollapseStart)
@@ -506,19 +455,15 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
             sel.MoveLeft(Unit=c.wdCharacter, Count=1)
 
         if not moved_out:
+            # если не смогли выйти — создадим абзац перед таблицей
             r0 = word_doc.Range(insert_pos, insert_pos)
             r0.InsertBefore("\r")
             sel.SetRange(insert_pos - 1, insert_pos - 1)
-            sel.Collapse(c.wdCollapseStart)
 
         # вставляем шапку (как таблицу)
         paste_pos = int(sel.Range.Start)
         sel.Paste()
-
-        try:
-            word_doc.Repaginate()
-        except Exception:
-            pass
+        word_doc.Repaginate()
 
         # определяем вставленную таблицу-шапку
         header_tbl = None
@@ -535,13 +480,17 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
             logger.warning("Table5 split: не удалось определить вставленную таблицу шапки.")
             return False
 
-        # Таблица данных сразу после вставленной шапки
+        # -----------------------------------------------------------------
+        # КЛЮЧЕВОЕ: удалить пустой абзац СРАЗУ ПОСЛЕ ШАПКИ
+        # Делаем это НАДЕЖНО: берем таблицу, которая идет СРАЗУ ПОСЛЕ header_tbl,
+        # и удаляем промежуток ТОЛЬКО между ними.
+        # -----------------------------------------------------------------
         data_tbl = _get_first_table_after_pos(word_doc, int(header_tbl.Range.End))
         if data_tbl is None:
             logger.warning("Table5 split: не нашли таблицу продолжения после вставленной шапки.")
             return False
 
-        # если вдруг data_tbl == header_tbl — сдвинем позицию на 1 символ
+        # если вдруг data_tbl == header_tbl (редко, но бывает) — сдвинем позицию на 1 символ
         try:
             if int(data_tbl.Range.Start) == int(header_tbl.Range.Start):
                 data_tbl = _get_first_table_after_pos(word_doc, int(header_tbl.Range.End) + 1)
@@ -552,7 +501,7 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
             logger.warning("Table5 split: не удалось получить таблицу данных для склейки.")
             return False
 
-        # удаляем РОВНО промежуток между header_tbl и data_tbl -> склеиваются
+        # удаляем РОВНО разрыв между header_tbl и data_tbl -> склеиваются
         try:
             join_rng = word_doc.Range(int(header_tbl.Range.End), int(data_tbl.Range.Start))
             if int(join_rng.End) > int(join_rng.Start):
@@ -560,10 +509,10 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
         except Exception as e:
             logger.warning(f"Table5 split: не удалось удалить промежуток между шапкой и продолжением: {e}")
 
-        # после склейки "таблица 5 (продолжение)" — это header_tbl
+        # после склейки "таблица 5 (продолжение)" — это header_tbl (как первая)
         cont_tbl = header_tbl
 
-        # делаем шапку повторяющейся
+        # делаем шапку повторяющейся (если получится)
         try:
             for rr in range(1, header_rows + 1):
                 try:
@@ -573,7 +522,10 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
         except Exception:
             pass
 
-        # НЕ даем следующей таблице (легенде) прилипнуть к таблице 5
+        # -----------------------------------------------------------------
+        # ВАЖНО: НЕ ДАЕМ СЛЕДУЮЩЕЙ ТАБЛИЦЕ (легенде) ПРИЛИПНУТЬ К ТАБЛИЦЕ 5
+        # Если сразу после cont_tbl идет таблица-легенда, гарантируем абзац между ними.
+        # -----------------------------------------------------------------
         try:
             next_tbl = _get_first_table_after_pos(word_doc, int(cont_tbl.Range.End))
             if next_tbl is not None and _looks_like_legend_table(next_tbl):
@@ -597,7 +549,6 @@ def split_table5_with_continuation_open_doc(word_doc, *, header_rows: int = 2) -
     return True
 
 
-
 def update_fields_with_word(docx_path: str) -> None:
     """
     Открывает DOCX в Word, режет Таблицу 5, обновляет поля/колонтитулы, сохраняет.
@@ -619,26 +570,9 @@ def update_fields_with_word(docx_path: str) -> None:
         word.DisplayAlerts = 0
 
         doc = word.Documents.Open(str(docx_path), ReadOnly=False, AddToRecentFiles=False)
-        # КРИТИЧНО для корректного определения страниц таблицы
-        _force_print_layout(word, doc, win32.constants)
-
-
-        # === ВСТАВИТЬ ВОТ ЭТО (сразу после Open) ===
-        word.Visible = True  # важно: создать ActiveWindow
-        word.ScreenUpdating = False
-        doc.Activate()
-
-        # Перейти в режим разметки страницы (Print Layout)
-        try:
-            word.ActiveWindow.View.Type = win32.constants.wdPrintView
-            word.ActiveWindow.View.SeekView = win32.constants.wdSeekMainDocument
-        except Exception:
-            pass
-
-        doc.Repaginate()
-        # === КОНЕЦ ВСТАВКИ ===
 
         try:
+            doc.Repaginate()
             split_table5_with_continuation_open_doc(doc, header_rows=2)
             doc.Repaginate()
         except Exception as e:
