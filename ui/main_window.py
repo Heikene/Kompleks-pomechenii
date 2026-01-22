@@ -1,3 +1,4 @@
+# ui/main_window.py
 from __future__ import annotations
 
 import sys
@@ -1003,6 +1004,88 @@ def update_fields_with_word(docx_path: str) -> None:
     finally:
         word.Quit()
 
+def _set_cell_text_keep_style(cell, text: str) -> None:
+    """
+    Ставит текст, стараясь не ломать форматирование ячейки:
+    - если есть runs, пишем в первый run и чистим остальные
+    - иначе fallback на cell.text
+    """
+    text = "" if text is None else str(text)
+
+    if cell.paragraphs:
+        p0 = cell.paragraphs[0]
+        if p0.runs:
+            p0.runs[0].text = text
+            for r in p0.runs[1:]:
+                r.text = ""
+            # чистим остальные параграфы в ячейке
+            for p in cell.paragraphs[1:]:
+                for r in p.runs:
+                    r.text = ""
+            return
+
+    cell.text = text
+
+
+def fill_report_table1_rooms_by_hashes(doc: DocxDocument, rooms: list[dict]) -> bool:
+    """
+    Ищет таблицу, где строка данных содержит маркеры:
+      #, ##, ###, ####, #$, #$$, #$$$, #%, #%%, #%%%
+    и заполняет её из rooms (num, name, klass, area, volume, dp, airflow, exchange, temp, rh).
+    """
+    token_to_key = {
+        "#": "num",
+        "##": "name",
+        "###": "klass",
+        "####": "area",
+        "#$": "volume",
+        "#$$": "dp",
+        "#$$$": "airflow",
+        "#%": "exchange",
+        "#%%": "temp",
+        "#%%%": "rh",
+    }
+
+    target_table = None
+    tmpl_row_idx = None
+
+    # 1) найти таблицу и "шаблонную" строку с #..#%%%
+    for t in doc.tables:
+        for ri, row in enumerate(t.rows):
+            row_tokens = [c.text.strip() for c in row.cells]
+            if ("#" in row_tokens) and ("##" in row_tokens) and ("#%%%" in row_tokens):
+                target_table = t
+                tmpl_row_idx = ri
+                break
+        if target_table:
+            break
+
+    if not target_table or tmpl_row_idx is None:
+        return False
+
+    # 2) копируем шаблонную строку (чтобы формат 1:1 сохранялся)
+    base_tr = deepcopy(target_table.rows[tmpl_row_idx]._tr)
+
+    need = max(1, len(rooms))  # если комнат 0 — оставим одну строку пустой
+    have = len(target_table.rows) - tmpl_row_idx
+
+    if need > have:
+        for _ in range(need - have):
+            target_table._tbl.append(deepcopy(base_tr))
+
+    # 3) заполняем
+    for i in range(need):
+        row = target_table.rows[tmpl_row_idx + i]
+        room = rooms[i] if i < len(rooms) else {}
+
+        for cell in row.cells:
+            token = (cell.text or "").strip()
+            key = token_to_key.get(token)
+            if not key:
+                continue
+            _set_cell_text_keep_style(cell, (room.get(key) or "").strip())
+
+    return True
 
 
 # =============================================================================
@@ -1014,24 +1097,30 @@ class RenderWorker(QThread):
     finished = Signal(bool, str, list)
 
     def __init__(
-        self,
-        tpl_path: str,
-        tests_doc_path: str,
-        xls_tests_path: str,
-        xls_eq_path: str,
-        out_path: str,
-        selected_tests: list[str],
-        rooms: list[dict],
-        equipment: list[dict],
-        ctx_fields: dict,
-        *,
-        risk_path: str,
-        scans_dir: str,
-        app1_images: list[str],
-        app4_images: list[str],
-        app5_images: list[str],
+            self,
+            tpl_path: str,
+            tests_doc_path: str,
+            xls_tests_path: str,
+            xls_eq_path: str,
+            out_path: str,
+            selected_tests: list[str],
+            rooms: list[dict],
+            equipment: list[dict],
+            ctx_fields: dict,
+            *,
+            risk_path: str,
+            scans_dir: str,
+            app1_images: list[str],
+            app4_images: list[str],
+            app5_images: list[str],
+
+            # NEW:
+            tpl_report_path: str | None = None,
+            out_report_path: str | None = None,
+            ctx_fields_report: dict | None = None,
     ):
         super().__init__()
+
         self.tpl_path = tpl_path
         self.tests_doc_path = tests_doc_path
         self.xls_tests_path = xls_tests_path
@@ -1047,6 +1136,11 @@ class RenderWorker(QThread):
         self.app4_images = app4_images or []
         self.app5_images = app5_images or []
 
+        # NEW:
+        self.tpl_report_path = tpl_report_path
+        self.out_report_path = out_report_path
+        self.ctx_fields_report = ctx_fields_report
+
     def run(self):
         missing: list[str] = []
         try:
@@ -1058,6 +1152,12 @@ class RenderWorker(QThread):
             io_manager.validate_file(Path(self.xls_eq_path))
             io_manager.validate_file(Path(self.risk_path))
             Path(self.out_path).parent.mkdir(parents=True, exist_ok=True)
+
+            # второй документ (ОТЧ-OQ) — опционально
+            do_report = bool(self.tpl_report_path and self.out_report_path and self.ctx_fields_report is not None)
+            if do_report:
+                io_manager.validate_file(Path(self.tpl_report_path))
+                Path(self.out_report_path).parent.mkdir(parents=True, exist_ok=True)
 
             # ---------- 1. Базовый контекст ----------
             step += 1
@@ -1264,13 +1364,12 @@ class RenderWorker(QThread):
                     self.progress.emit(step, "Вставка тестовых таблиц…")
                     missing = table_processor.insert_test_tables(doc, tmp_tests_path, self.selected_tests)
 
-                    # ---------- 10. Таблица 5 (Excel -> плейсхолдеры, шапку не трогаем) ----------
+                    # ---------- 10. Таблица 5 ----------
                     step += 1
                     self.progress.emit(step, "Вставка Таблицы 5 (анализ рисков)…")
                     try:
                         risk_rows = get_risk_rows(self.risk_path, self.selected_tests)
                         insert_table5_into_doc(doc, risk_rows)
-
                     except Exception as e:
                         logger.warning(f"Таблица 5 не вставлена: {e}")
 
@@ -1300,17 +1399,52 @@ class RenderWorker(QThread):
                 except Exception as e:
                     logger.warning(f"Не удалось обновить поля/разрезать таблицу 5 через Word: {e}")
 
-            self.finished.emit(True, f"Документ сохранён:\n{self.out_path}", missing)
+                # ---------- 13. Рендер ОТЧ-OQ (только плейсхолдеры; без таблиц) ----------
+                if do_report:
+                    step += 1
+                    self.progress.emit(step, "Рендер ОТЧ-OQ…")
+
+                    context_r = template_renderer.build_context(self.ctx_fields_report, self.rooms)
+
+                    # если в отчёте используются сканы/приложения — оставляем
+                    if scan_paths:
+                        context_r["Scan_paths"] = scan_paths
+
+                    tpl_r = DocxTemplate(self.tpl_report_path)
+
+                    context_r["App1Scans"] = make_inline_images(tpl_r, self.app1_images, label="Приложение 1")
+                    context_r["App4Scans"] = make_inline_images(tpl_r, self.app4_images, label="Приложение 4")
+                    context_r["App5Scans"] = make_inline_images(tpl_r, self.app5_images, label="Приложение 5")
+                    context_r["Scans"] = make_inline_images(tpl_r, scan_paths, label="Приложение 2")
+
+                    tpl_r.render(context_r)
+
+                    with temp_docx() as tmp_r_path:
+                        tpl_r.save(tmp_r_path)
+                        doc_r = Document(tmp_r_path)
+
+                        # ВОТ ЭТО ДОБАВИТЬ:
+                        ok = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
+                        if not ok:
+                            logger.warning(
+                                "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
+
+                        doc_r.save(self.out_report_path)
+
+                    # если надо обновлять поля/колонтитулы через Word — можно оставить
+                    try:
+                        word_table5_splitter.update_fields_with_word(self.out_report_path)
+                    except Exception as e:
+                        logger.warning(f"Не удалось обновить поля через Word (ОТЧ-OQ): {e}")
+
+            msg = f"Документ сохранён:\n{self.out_path}"
+            if do_report and self.out_report_path:
+                msg += f"\n\nОТЧ-OQ сохранён:\n{self.out_report_path}"
+            self.finished.emit(True, msg, missing)
 
         except Exception as e:
             logger.exception("Ошибка в RenderWorker:")
             self.finished.emit(False, str(e), [])
-
-
-
-
-
-
 
 
 # =============================================================================
@@ -1767,7 +1901,23 @@ class MainWindow(QMainWindow):
         if not out_base.name:
             QMessageBox.critical(self, "Ошибка", "Не указан путь сохранения")
             return
+
         out_path = out_base.with_name(out_base.stem + f"_{mode}.docx")
+
+        # ---------- ОТЧ-OQ генерируем ТОЛЬКО вместе с OQ ----------
+        base = Path(__file__).resolve().parents[1]
+        tpl_report_path = None
+        out_report_path = None
+        ctx_fields_report = None
+
+        if mode == "OQ":
+            # шаблон отчёта лежит в корне проекта
+            candidate_tpl = base / "Шаблон ОТЧ-OQ.docx"
+            if candidate_tpl.exists():
+                tpl_report_path = str(candidate_tpl)
+                out_report_path = str(out_base.with_name(out_base.stem + f"_{mode}_ОТЧ-OQ.docx"))
+            else:
+                logger.warning(f"Шаблон отчёта ОТЧ-OQ не найден: {candidate_tpl}")
 
         missing_fields = []
         if not tpl_path:
@@ -1787,12 +1937,27 @@ class MainWindow(QMainWindow):
             for s in sel_tests_raw if isinstance(s, str) and s.strip()
         ]
 
-        raw_prt = self.prt_input.text().strip()
-        prt_norm = raw_prt.upper()
-        for pref in ("ПРТ-OQ-", "ПРТ-PQ-"):
-            prt_norm = prt_norm.replace(pref, "")
-        full_prt = f"ПРТ-{mode}-{prt_norm}" if prt_norm else ""
-        prt = RichText(full_prt, bold=False, italic=False, underline=False)
+        def _norm_doc_id(raw: str) -> str:
+            s = (raw or "").strip().upper()
+            # если пользователь вставил уже с префиксом — срежем
+            prefixes = (
+                "ПРТ-OQ-", "ПРТ-PQ-", "ПРТ-IQ-",
+                "ОТЧ-OQ-", "ОТЧ-PQ-", "ОТЧ-IQ-",
+                "ПРТ-", "ОТЧ-",
+            )
+            for p in prefixes:
+                if s.startswith(p):
+                    s = s[len(p):]
+                    break
+            return s
+
+        doc_id = _norm_doc_id(self.prt_input.text())
+
+        # для основного документа (OQ/PQ): {{prt}} = ПРТ-<ввод>
+        prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # для отчёта ОТЧ-OQ: {{prt}} = ОТЧ-OQ-<ввод>
+        prt_report = RichText(f"ОТЧ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
 
         object_text = self.object_input.text().strip()
         object_rd = ""
@@ -1843,6 +2008,10 @@ class MainWindow(QMainWindow):
             "Тесты_маркированным_списком": RichText("\n".join(f"• {t}" for t in sel_tests), bold=False),
         }
 
+        if mode == "OQ" and tpl_report_path and out_report_path:
+            ctx_fields_report = dict(ctx_fields)
+            ctx_fields_report["prt"] = prt_report
+
         self.setEnabled(False)
         self.progress_bar.setValue(0)
 
@@ -1854,7 +2023,13 @@ class MainWindow(QMainWindow):
             app1_images=app1_images,
             app4_images=app4_images,
             app5_images=app5_images,
+
+            # ОТЧ-OQ (только для OQ):
+            tpl_report_path=tpl_report_path,
+            out_report_path=out_report_path,
+            ctx_fields_report=ctx_fields_report,
         )
+
         self.worker.progress.connect(self.on_progress)
         self.worker.finished.connect(self.on_finished)
         self.worker.start()
