@@ -1027,6 +1027,177 @@ def _set_cell_text_keep_style(cell, text: str) -> None:
     cell.text = text
 
 
+from copy import deepcopy
+import re
+from pathlib import Path
+import openpyxl
+from docx.table import Table
+from docx.document import Document as DocxDocument
+
+
+def _norm_key(s: str) -> str:
+    s = "" if s is None else str(s)
+    s = re.sub(r"(?i)^\s*тест\s*\d+(?:[.,]\d+)?\.?\s*", "", s).strip()
+    s = (
+        s.replace("\u00A0", " ")
+         .replace("\u202F", " ")
+         .replace("\u200B", "")
+         .replace("\u00AD", "")
+    )
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    s = s.replace("ё", "е")
+    # ключ без знаков
+    return re.sub(r"[^0-9a-zа-я]+", "", s)
+
+
+def _set_cell_text_keep_style(cell, text: str) -> None:
+    text = "" if text is None else str(text)
+
+    if cell.paragraphs:
+        p0 = cell.paragraphs[0]
+        if p0.runs:
+            p0.runs[0].text = text
+            for r in p0.runs[1:]:
+                r.text = ""
+            for p in cell.paragraphs[1:]:
+                for r in p.runs:
+                    r.text = ""
+            return
+
+    cell.text = text
+
+
+def _load_table2_rows_from_excel(xlsx_path: str, sheet_name: str | None = None) -> dict[str, dict]:
+    """
+    Возвращает словарь:
+      norm(test_name) -> {"test":..., "crit":..., "fact":..., "eval":...}
+    """
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb[wb.sheetnames[0]]
+
+    # ожидаем шапку в первой строке
+    # A: тест, B: критерий, C: факт, D: оценка
+    out: dict[str, dict] = {}
+    for r in range(2, ws.max_row + 1):
+        test = ws.cell(r, 1).value
+        crit = ws.cell(r, 2).value
+        fact = ws.cell(r, 3).value
+        evl  = ws.cell(r, 4).value
+
+        if not test:
+            continue
+
+        row = {
+            "test": str(test).strip(),
+            "crit": "" if crit is None else str(crit).strip(),
+            "fact": "" if fact is None else str(fact).strip(),
+            "eval": "" if evl  is None else str(evl).strip(),
+        }
+        out[_norm_key(row["test"])] = row
+
+    return out
+
+
+def fill_report_table2_from_excel(
+    doc: DocxDocument,
+    selected_tests: list[str],
+    xlsx_path: str,
+    *,
+    sheet_name: str | None = None,
+    default_eval: str = "Соответствует",
+) -> tuple[bool, list[str]]:
+    """
+    Заполняет Таблицу 2 в ОТЧ-OQ данными из Excel по выбранным тестам.
+    Возвращает: (ok, missing_tests)
+    """
+
+    # 1) грузим Excel
+    rows_map = _load_table2_rows_from_excel(xlsx_path, sheet_name=sheet_name)
+
+    # 2) находим таблицу 2 (по заголовку столбцов)
+    def norm(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
+
+    target_table: Table | None = None
+    for t in doc.tables:
+        if not t.rows:
+            continue
+        head = " ".join(c.text for c in t.rows[0].cells)
+        h = norm(head)
+        if ("тест" in h) and ("критер" in h) and ("фактичес" in h) and ("оценк" in h):
+            target_table = t
+            break
+
+    if target_table is None:
+        return False, selected_tests[:]  # не нашли таблицу
+
+    # 3) ищем шаблонную строку с маркерами (лучший вариант)
+    token_row_idx = None
+    tokens = {"#T2_TEST", "#T2_CRIT", "#T2_FACT", "#T2_EVAL"}
+    for ri, row in enumerate(target_table.rows):
+        row_tokens = { (c.text or "").strip() for c in row.cells }
+        if tokens.issubset(row_tokens):
+            token_row_idx = ri
+            break
+
+    # если шаблонной строки нет:
+    # - если есть хотя бы 2 строки, возьмем 2ю как базовую
+    # - иначе создадим строку через add_row (стиль может быть не идеальный)
+    if token_row_idx is None:
+        if len(target_table.rows) >= 2:
+            token_row_idx = 1
+        else:
+            target_table.add_row()
+            token_row_idx = 1
+
+    base_tr = deepcopy(target_table.rows[token_row_idx]._tr)
+
+    # 4) готовим данные в порядке выбора пользователя
+    missing: list[str] = []
+    chosen_rows: list[dict] = []
+    for tname in selected_tests:
+        key = _norm_key(tname)
+        row = rows_map.get(key)
+        if not row:
+            missing.append(tname)
+            # можно пропускать, либо вставлять пустую строку — выберу пропуск
+            continue
+        chosen_rows.append(row)
+
+    # если ничего не нашли — хотя бы очистим шаблонную строку
+    need = max(1, len(chosen_rows))
+
+    # сколько строк данных сейчас начиная с token_row_idx
+    have = len(target_table.rows) - token_row_idx
+    if need > have:
+        for _ in range(need - have):
+            target_table._tbl.append(deepcopy(base_tr))
+
+    # 5) заполняем строки
+    for i in range(need):
+        row = target_table.rows[token_row_idx + i]
+        data = chosen_rows[i] if i < len(chosen_rows) else {"test": "", "crit": "", "fact": "", "eval": ""}
+
+        for cell in row.cells:
+            token = (cell.text or "").strip()
+
+            if token == "#T2_TEST":
+                _set_cell_text_keep_style(cell, data.get("test", ""))
+            elif token == "#T2_CRIT":
+                _set_cell_text_keep_style(cell, data.get("crit", ""))
+            elif token == "#T2_FACT":
+                _set_cell_text_keep_style(cell, data.get("fact", ""))
+            elif token == "#T2_EVAL":
+                ev = data.get("eval", "").strip() or default_eval
+                _set_cell_text_keep_style(cell, ev)
+            else:
+                # если маркеров нет (fallback-режим), попробуем по колонкам
+                # (тут можно оставить как есть)
+                pass
+
+    return True, missing
+
+
 def fill_report_table1_rooms_by_hashes(doc: DocxDocument, rooms: list[dict]) -> bool:
     """
     Ищет таблицу, где строка данных содержит маркеры:
@@ -1118,10 +1289,12 @@ class RenderWorker(QThread):
             tpl_report_path: str | None = None,
             out_report_path: str | None = None,
             ctx_fields_report: dict | None = None,
+            xls_report_path: str | None = None,
     ):
         super().__init__()
 
         self.tpl_path = tpl_path
+        self.xls_report_path = xls_report_path
         self.tests_doc_path = tests_doc_path
         self.xls_tests_path = xls_tests_path
         self.xls_eq_path = xls_eq_path
@@ -1158,6 +1331,11 @@ class RenderWorker(QThread):
             if do_report:
                 io_manager.validate_file(Path(self.tpl_report_path))
                 Path(self.out_report_path).parent.mkdir(parents=True, exist_ok=True)
+
+                if self.xls_report_path:
+                    io_manager.validate_file(Path(self.xls_report_path))
+                else:
+                    logger.warning("ОТЧ-OQ: не указан Excel-файл с данными для Таблицы 2.")
 
             # ---------- 1. Базовый контекст ----------
             step += 1
@@ -1428,6 +1606,29 @@ class RenderWorker(QThread):
                         if not ok:
                             logger.warning(
                                 "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
+
+                        doc_r.save(self.out_report_path)
+
+                        ok = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
+                        if not ok:
+                            logger.warning(
+                                "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
+
+                        # >>> ДОБАВИТЬ: Таблица 2 из Excel по выбранным тестам
+                        if self.xls_report_path:
+                            ok2, missing2 = fill_report_table2_from_excel(
+                                doc_r,
+                                self.selected_tests,  # порядок как выбран пользователем
+                                self.xls_report_path,
+                                # sheet_name="Лист1",     # если нужно
+                                default_eval="Соответствует",
+                            )
+                            if not ok2:
+                                logger.warning("ОТЧ-OQ: Таблица 2 не найдена (по заголовку/маркерам).")
+                            if missing2:
+                                logger.warning("ОТЧ-OQ: в Excel нет строк для тестов:\n" + "\n".join(missing2))
+                        else:
+                            logger.warning("ОТЧ-OQ: Excel отчёта не задан — Таблица 2 не заполнена.")
 
                         doc_r.save(self.out_report_path)
 
@@ -1909,6 +2110,7 @@ class MainWindow(QMainWindow):
         tpl_report_path = None
         out_report_path = None
         ctx_fields_report = None
+        xls_report_path = None
 
         if mode == "OQ":
             # шаблон отчёта лежит в корне проекта
@@ -1918,6 +2120,12 @@ class MainWindow(QMainWindow):
                 out_report_path = str(out_base.with_name(out_base.stem + f"_{mode}_ОТЧ-OQ.docx"))
             else:
                 logger.warning(f"Шаблон отчёта ОТЧ-OQ не найден: {candidate_tpl}")
+
+            candidate_xls = base / "ОТЧ-OQ.xlsx"  # имя файла поменяй под свой
+            if candidate_xls.exists():
+                xls_report_path = str(candidate_xls)
+            else:
+                logger.warning(f"Excel отчёта ОТЧ-OQ не найден: {candidate_xls}")
 
         missing_fields = []
         if not tpl_path:
@@ -2028,6 +2236,7 @@ class MainWindow(QMainWindow):
             tpl_report_path=tpl_report_path,
             out_report_path=out_report_path,
             ctx_fields_report=ctx_fields_report,
+            xls_report_path=xls_report_path,
         )
 
         self.worker.progress.connect(self.on_progress)
