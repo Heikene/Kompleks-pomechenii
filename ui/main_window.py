@@ -12,6 +12,7 @@ from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
+from ui import word_table2_otch_splitter
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication, QKeySequence, QShortcut
@@ -1713,10 +1714,11 @@ class RenderWorker(QThread):
                         doc_r.save(self.out_report_path)
 
                     # если надо обновлять поля/колонтитулы через Word — можно оставить
+                    # Таблица 2: деление по странице + "Продолжение таблицы 2" + обновление полей
                     try:
-                        word_table5_splitter.update_fields_with_word(self.out_report_path)
+                        word_table2_otch_splitter.update_fields_and_split_table2(self.out_report_path)
                     except Exception as e:
-                        logger.warning(f"Не удалось обновить поля через Word (ОТЧ-OQ): {e}")
+                        logger.warning(f"ОТЧ-OQ: не удалось разрезать Таблицу 2 / обновить поля через Word: {e}")
 
             msg = f"Документ сохранён:\n{self.out_path}"
             if do_report and self.out_report_path:
