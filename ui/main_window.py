@@ -43,7 +43,7 @@ from logger import logger
 
 from risk_table5 import get_risk_rows, insert_table5_into_doc
 import word_table5_splitter
-
+import word_update_all
 
 
 
@@ -1719,6 +1719,13 @@ class RenderWorker(QThread):
                         word_table2_otch_splitter.update_fields_and_split_table2(self.out_report_path)
                     except Exception as e:
                         logger.warning(f"ОТЧ-OQ: не удалось разрезать Таблицу 2 / обновить поля через Word: {e}")
+
+                    # ✅ финальный проход: обновить ВСЁ (PAGE/NUMPAGES + TOC + поля)
+                    try:
+                        import word_update_all
+                        word_update_all.update_all(self.out_report_path)
+                    except Exception as e:
+                        logger.warning(f"ОТЧ-OQ: не удалось обновить все поля/содержание через Word: {e}")
 
             msg = f"Документ сохранён:\n{self.out_path}"
             if do_report and self.out_report_path:
