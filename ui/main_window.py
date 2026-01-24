@@ -1258,6 +1258,88 @@ def fill_report_table1_rooms_by_hashes(doc: DocxDocument, rooms: list[dict]) -> 
 
     return True
 
+def fix_table2_caption_glue(doc: DocxDocument, caption: str = "Таблица 2") -> bool:
+    """
+    1) Удаляет пустые абзацы между подписью и таблицей
+    2) Делает таблицу inline (убирает tblpPr/tblOverlap)
+    3) КЛЮЧЕВОЕ: ставит keepNext на абзац подписи, чтобы Word не оставлял подпись сиротой
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    def norm(s: str) -> str:
+        s = (s or "").replace("\u00A0", " ")
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s
+
+    cap_p = None
+    for p in doc.paragraphs:
+        if norm(p.text) == norm(caption):
+            cap_p = p
+            break
+    if cap_p is None:
+        return False
+
+    # ✅ Главное: подпись не должна отрываться от таблицы
+    pf = cap_p.paragraph_format
+    pf.keep_with_next = True
+    pf.keep_together = True
+    pf.widow_control = True
+
+    def norm(s: str) -> str:
+        s = (s or "").replace("\u00A0", " ")
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s
+
+    # 0) найти абзац подписи
+    cap_p = None
+    for p in doc.paragraphs:
+        if norm(p.text) == norm(caption):
+            cap_p = p
+            break
+    if cap_p is None:
+        return False
+
+    # 1) keepNext на подпись (чтобы не отрывалась от таблицы)
+    pPr = cap_p._p.get_or_add_pPr()
+    if pPr.find(qn("w:keepNext")) is None:
+        pPr.append(OxmlElement("w:keepNext"))
+
+    # (опционально) чуть безопаснее: не разрывать саму подпись
+    if pPr.find(qn("w:keepLines")) is None:
+        pPr.append(OxmlElement("w:keepLines"))
+
+    # 2) найти следующий элемент и удалить пустые абзацы между подписью и таблицей
+    p_el = cap_p._p
+    sib = p_el.getnext()
+
+    while sib is not None and sib.tag != qn("w:tbl"):
+        if sib.tag == qn("w:p"):
+            # удаляем реально пустые (в т.ч. с одними пробелами)
+            txt = "".join(t.text for t in sib.iter() if t.tag == qn("w:t"))
+            if norm(txt) == "":
+                nxt = sib.getnext()
+                sib.getparent().remove(sib)
+                sib = nxt
+                continue
+        sib = sib.getnext()
+
+    if sib is None or sib.tag != qn("w:tbl"):
+        return False
+
+    # 3) убрать "плавающее" позиционирование таблицы
+    tbl_el = sib
+    tblPr = tbl_el.find(qn("w:tblPr"))
+    if tblPr is not None:
+        for child_tag in (qn("w:tblpPr"), qn("w:tblOverlap")):
+            ch = tblPr.find(child_tag)
+            if ch is not None:
+                tblPr.remove(ch)
+
+    return True
+
+
+
 
 # =============================================================================
 # 9) Render Worker
@@ -1577,14 +1659,13 @@ class RenderWorker(QThread):
                 except Exception as e:
                     logger.warning(f"Не удалось обновить поля/разрезать таблицу 5 через Word: {e}")
 
-                # ---------- 13. Рендер ОТЧ-OQ (только плейсхолдеры; без таблиц) ----------
+                # ---------- 13. Рендер ОТЧ-OQ ----------
                 if do_report:
                     step += 1
                     self.progress.emit(step, "Рендер ОТЧ-OQ…")
 
                     context_r = template_renderer.build_context(self.ctx_fields_report, self.rooms)
 
-                    # если в отчёте используются сканы/приложения — оставляем
                     if scan_paths:
                         context_r["Scan_paths"] = scan_paths
 
@@ -1601,26 +1682,18 @@ class RenderWorker(QThread):
                         tpl_r.save(tmp_r_path)
                         doc_r = Document(tmp_r_path)
 
-                        # ВОТ ЭТО ДОБАВИТЬ:
-                        ok = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
-                        if not ok:
+                        # 1) Таблица 1 (помещения)
+                        ok1 = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
+                        if not ok1:
                             logger.warning(
                                 "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
 
-                        doc_r.save(self.out_report_path)
-
-                        ok = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
-                        if not ok:
-                            logger.warning(
-                                "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
-
-                        # >>> ДОБАВИТЬ: Таблица 2 из Excel по выбранным тестам
+                        # 2) Таблица 2 (из Excel по выбранным тестам)
                         if self.xls_report_path:
                             ok2, missing2 = fill_report_table2_from_excel(
                                 doc_r,
                                 self.selected_tests,  # порядок как выбран пользователем
                                 self.xls_report_path,
-                                # sheet_name="Лист1",     # если нужно
                                 default_eval="Соответствует",
                             )
                             if not ok2:
@@ -1628,8 +1701,15 @@ class RenderWorker(QThread):
                             if missing2:
                                 logger.warning("ОТЧ-OQ: в Excel нет строк для тестов:\n" + "\n".join(missing2))
                         else:
-                            logger.warning("ОТЧ-OQ: Excel отчёта не задан — Таблица 2 не заполнена.")
+                            logger.warning("ОТЧ-OQ: Excel отчёта ОТЧ-OQ не задан — Таблица 2 не заполнена.")
 
+                        # 3) Исправление разрыва: "Таблица 2" приклеить к следующей таблице
+                        try:
+                            fix_table2_caption_glue(doc_r)  # <-- ВАЖНО: функция должна быть определена
+                        except Exception as e:
+                            logger.warning(f"ОТЧ-OQ: не удалось применить fix_table2_caption_glue: {e}")
+
+                        # 4) Сохранение один раз
                         doc_r.save(self.out_report_path)
 
                     # если надо обновлять поля/колонтитулы через Word — можно оставить
