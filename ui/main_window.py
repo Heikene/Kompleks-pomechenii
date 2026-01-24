@@ -2250,6 +2250,15 @@ class MainWindow(QMainWindow):
 
         doc_id = _norm_doc_id(self.prt_input.text())
 
+        # для основного документа (OQ/PQ)
+        prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # для отчёта ОТЧ-OQ
+        prt_report = RichText(f"ОТЧ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # ✅ ВОТ ЭТО ДОБАВЬ: для {{prt1}} в Шаблон ОТЧ-OQ.docx
+        prt1_report = RichText(f"ПРТ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
         # для основного документа (OQ/PQ): {{prt}} = ПРТ-<ввод>
         prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
 
@@ -2308,6 +2317,7 @@ class MainWindow(QMainWindow):
         if mode == "OQ" and tpl_report_path and out_report_path:
             ctx_fields_report = dict(ctx_fields)
             ctx_fields_report["prt"] = prt_report
+            ctx_fields_report["prt1"] = prt1_report
 
         self.setEnabled(False)
         self.progress_bar.setValue(0)
