@@ -8309,3 +8309,104 @@ Traceback (most recent call last):
     split_after_results_and_repeat_header(doc, header_rows=2)
     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 NameError: name 'split_after_results_and_repeat_header' is not defined
+2026-01-25 23:11:08,516 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-25 23:11:08,583 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:11:08,592 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:11:08,608 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:11:08,612 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:11:15,558 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:11:15,566 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:11:15,580 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:11:15,584 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:11:54,387 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:11:56,843 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:12:03,877 DEBUG: Начинаем process_rooms_table
+2026-01-25 23:12:03,900 DEBUG: process_rooms_table выполнен
+2026-01-25 23:12:03,900 DEBUG: Начинаем process_equipment_table
+2026-01-25 23:12:03,929 DEBUG: process_equipment_table выполнен
+2026-01-25 23:12:04,913 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\pha-z\Desktop\doc_generator_app\ui\main_window.py", line 1632, in run
+    word_repeat_headers.split_test_results_table(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'word_repeat_headers' has no attribute 'split_test_results_table'
+2026-01-25 23:28:08,555 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-25 23:28:08,586 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:28:08,594 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:28:08,607 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:28:08,611 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:28:10,140 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:28:10,147 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:28:10,163 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:28:10,168 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:28:39,823 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:28:42,175 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:28:50,484 DEBUG: Начинаем process_rooms_table
+2026-01-25 23:28:50,508 DEBUG: process_rooms_table выполнен
+2026-01-25 23:28:50,508 DEBUG: Начинаем process_equipment_table
+2026-01-25 23:28:50,537 DEBUG: process_equipment_table выполнен
+2026-01-25 23:28:51,513 DEBUG: Начинаем process_test_results_tables
+2026-01-25 23:28:51,710 WARNING: Не удалось объединить колонку 1 в блоке [12, 13]: no `tc` element at grid_offset=1
+2026-01-25 23:28:51,727 WARNING: Не удалось объединить колонку 1 в блоке [19, 20]: no `tc` element at grid_offset=1
+2026-01-25 23:28:51,744 WARNING: Не удалось объединить колонку 1 в блоке [26, 27]: no `tc` element at grid_offset=1
+2026-01-25 23:28:51,760 WARNING: Не удалось объединить колонку 1 в блоке [33, 34]: no `tc` element at grid_offset=1
+2026-01-25 23:28:51,776 WARNING: Не удалось объединить колонку 1 в блоке [40, 41]: no `tc` element at grid_offset=1
+2026-01-25 23:28:51,951 DEBUG: process_test_results_tables завершён
+2026-01-25 23:28:57,010 INFO: Table5 split: всего таблиц в документе: 57
+2026-01-25 23:28:57,603 INFO: Table5 split: нашли таблицу 5 через Find('Таблица 5').
+2026-01-25 23:28:58,069 INFO: Table5 split: таблица на одной странице — делить не нужно.
+2026-01-25 23:29:11,414 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:29:23,124 WARNING: ОТЧ-OQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
+2026-01-25 23:30:32,818 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:30:32,825 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:30:32,839 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:30:32,842 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:34:44,452 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:34:46,757 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:34:53,893 DEBUG: Начинаем process_rooms_table
+2026-01-25 23:34:53,917 DEBUG: process_rooms_table выполнен
+2026-01-25 23:34:53,917 DEBUG: Начинаем process_equipment_table
+2026-01-25 23:34:53,955 DEBUG: process_equipment_table выполнен
+2026-01-25 23:34:59,764 DEBUG: Начинаем process_test_results_tables
+2026-01-25 23:34:59,985 WARNING: Не удалось объединить колонку 1 в блоке [12, 13]: no `tc` element at grid_offset=1
+2026-01-25 23:35:00,002 WARNING: Не удалось объединить колонку 1 в блоке [19, 20]: no `tc` element at grid_offset=1
+2026-01-25 23:35:00,020 WARNING: Не удалось объединить колонку 1 в блоке [26, 27]: no `tc` element at grid_offset=1
+2026-01-25 23:35:00,036 WARNING: Не удалось объединить колонку 1 в блоке [33, 34]: no `tc` element at grid_offset=1
+2026-01-25 23:35:00,053 WARNING: Не удалось объединить колонку 1 в блоке [40, 41]: no `tc` element at grid_offset=1
+2026-01-25 23:35:00,823 DEBUG: process_test_results_tables завершён
+2026-01-25 23:35:06,673 INFO: Table5 split: всего таблиц в документе: 65
+2026-01-25 23:35:07,243 INFO: Table5 split: нашли таблицу 5 через Find('Таблица 5').
+2026-01-25 23:35:08,190 INFO: Table5 split: режем перед строкой 8 (страницы 12 -> 13).
+2026-01-25 23:35:09,629 INFO: Table5 split: header inserted+merged; header_rows=2; cols=7
+2026-01-25 23:35:09,629 INFO: Table5 split: выполнено.
+2026-01-25 23:35:33,644 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:35:43,141 WARNING: ОТЧ-OQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
+2026-01-25 23:40:00,983 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-25 23:40:01,012 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:40:01,019 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:40:01,033 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:40:01,036 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:40:13,184 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-25 23:40:13,192 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-25 23:40:13,205 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-25 23:40:13,208 DEBUG: [СИ] загружено 11 позиций
+2026-01-25 23:41:21,808 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:41:24,246 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:41:31,515 DEBUG: Начинаем process_rooms_table
+2026-01-25 23:41:31,537 DEBUG: process_rooms_table выполнен
+2026-01-25 23:41:31,538 DEBUG: Начинаем process_equipment_table
+2026-01-25 23:41:31,577 DEBUG: process_equipment_table выполнен
+2026-01-25 23:41:37,350 DEBUG: Начинаем process_test_results_tables
+2026-01-25 23:41:37,582 WARNING: Не удалось объединить колонку 1 в блоке [12, 13]: no `tc` element at grid_offset=1
+2026-01-25 23:41:37,599 WARNING: Не удалось объединить колонку 1 в блоке [19, 20]: no `tc` element at grid_offset=1
+2026-01-25 23:41:37,615 WARNING: Не удалось объединить колонку 1 в блоке [26, 27]: no `tc` element at grid_offset=1
+2026-01-25 23:41:37,632 WARNING: Не удалось объединить колонку 1 в блоке [33, 34]: no `tc` element at grid_offset=1
+2026-01-25 23:41:37,648 WARNING: Не удалось объединить колонку 1 в блоке [40, 41]: no `tc` element at grid_offset=1
+2026-01-25 23:41:38,423 DEBUG: process_test_results_tables завершён
+2026-01-25 23:41:44,776 INFO: Table5 split: всего таблиц в документе: 65
+2026-01-25 23:41:45,569 INFO: Table5 split: нашли таблицу 5 через Find('Таблица 5').
+2026-01-25 23:41:47,534 INFO: Table5 split: режем перед строкой 8 (страницы 13 -> 14).
+2026-01-25 23:41:49,178 INFO: Table5 split: header inserted+merged; header_rows=2; cols=7
+2026-01-25 23:41:49,178 INFO: Table5 split: выполнено.
+2026-01-25 23:41:55,185 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-25 23:42:03,963 WARNING: ОТЧ-OQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
