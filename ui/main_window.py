@@ -35,6 +35,8 @@ from docx.image.image import Image
 
 from pymorphy3 import MorphAnalyzer
 
+import word_test11_splitter
+
 from file_utils import temp_docx
 import io_manager
 import template_renderer
@@ -1625,6 +1627,14 @@ class RenderWorker(QThread):
                     self.progress.emit(step, "Вставка тестовых таблиц…")
                     missing = table_processor.insert_test_tables(doc, tmp_tests_path, self.selected_tests)
 
+                    import word_repeat_headers  # вверху файла или прямо перед вызовом
+
+                    word_repeat_headers.split_test_results_table(
+                        doc,
+                        split_phrase="Результаты испытания",
+                        header_rows=2,  # у вас на скрине 2 строки шапки колонок
+                    )
+
                     # ---------- 10. Таблица 5 ----------
                     step += 1
                     self.progress.emit(step, "Вставка Таблицы 5 (анализ рисков)…")
@@ -1639,6 +1649,12 @@ class RenderWorker(QThread):
                     self.progress.emit(step, "Заполнение результатов тестов…")
                     table_processor.process_test_results_tables(doc, self.rooms)
                     _fill_test_112(doc, self.rooms)
+
+                    # после заполнения результатов
+                    try:
+                        word_test11_splitter.split_after_results_and_repeat_header(doc, header_rows=2)
+                    except Exception as e:
+                        logger.warning(f"Не удалось разрезать таблицу теста 11 / повторить шапку: {e}")
 
                     step += 1
                     self.progress.emit(step, "Унификация шрифта…")
