@@ -1135,6 +1135,7 @@ if __name__ == "__main__":
     main()
 
 
+# ui/main_window.py
 from __future__ import annotations
 
 import sys
@@ -1148,6 +1149,7 @@ from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
+from ui import word_table2_otch_splitter
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication, QKeySequence, QShortcut
@@ -1170,6 +1172,8 @@ from docx.image.image import Image
 
 from pymorphy3 import MorphAnalyzer
 
+import word_test11_splitter
+
 from file_utils import temp_docx
 import io_manager
 import template_renderer
@@ -1178,7 +1182,7 @@ from logger import logger
 
 from risk_table5 import get_risk_rows, insert_table5_into_doc
 import word_table5_splitter
-
+import word_update_all
 
 
 
@@ -2140,6 +2144,341 @@ def update_fields_with_word(docx_path: str) -> None:
     finally:
         word.Quit()
 
+def _set_cell_text_keep_style(cell, text: str) -> None:
+    """
+    Ставит текст, стараясь не ломать форматирование ячейки:
+    - если есть runs, пишем в первый run и чистим остальные
+    - иначе fallback на cell.text
+    """
+    text = "" if text is None else str(text)
+
+    if cell.paragraphs:
+        p0 = cell.paragraphs[0]
+        if p0.runs:
+            p0.runs[0].text = text
+            for r in p0.runs[1:]:
+                r.text = ""
+            # чистим остальные параграфы в ячейке
+            for p in cell.paragraphs[1:]:
+                for r in p.runs:
+                    r.text = ""
+            return
+
+    cell.text = text
+
+
+from copy import deepcopy
+import re
+from pathlib import Path
+import openpyxl
+from docx.table import Table
+from docx.document import Document as DocxDocument
+
+
+def _norm_key(s: str) -> str:
+    s = "" if s is None else str(s)
+    s = re.sub(r"(?i)^\s*тест\s*\d+(?:[.,]\d+)?\.?\s*", "", s).strip()
+    s = (
+        s.replace("\u00A0", " ")
+         .replace("\u202F", " ")
+         .replace("\u200B", "")
+         .replace("\u00AD", "")
+    )
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    s = s.replace("ё", "е")
+    # ключ без знаков
+    return re.sub(r"[^0-9a-zа-я]+", "", s)
+
+
+def _set_cell_text_keep_style(cell, text: str) -> None:
+    text = "" if text is None else str(text)
+
+    if cell.paragraphs:
+        p0 = cell.paragraphs[0]
+        if p0.runs:
+            p0.runs[0].text = text
+            for r in p0.runs[1:]:
+                r.text = ""
+            for p in cell.paragraphs[1:]:
+                for r in p.runs:
+                    r.text = ""
+            return
+
+    cell.text = text
+
+
+def _load_table2_rows_from_excel(xlsx_path: str, sheet_name: str | None = None) -> dict[str, dict]:
+    """
+    Возвращает словарь:
+      norm(test_name) -> {"test":..., "crit":..., "fact":..., "eval":...}
+    """
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb[wb.sheetnames[0]]
+
+    # ожидаем шапку в первой строке
+    # A: тест, B: критерий, C: факт, D: оценка
+    out: dict[str, dict] = {}
+    for r in range(2, ws.max_row + 1):
+        test = ws.cell(r, 1).value
+        crit = ws.cell(r, 2).value
+        fact = ws.cell(r, 3).value
+        evl  = ws.cell(r, 4).value
+
+        if not test:
+            continue
+
+        row = {
+            "test": str(test).strip(),
+            "crit": "" if crit is None else str(crit).strip(),
+            "fact": "" if fact is None else str(fact).strip(),
+            "eval": "" if evl  is None else str(evl).strip(),
+        }
+        out[_norm_key(row["test"])] = row
+
+    return out
+
+
+def fill_report_table2_from_excel(
+    doc: DocxDocument,
+    selected_tests: list[str],
+    xlsx_path: str,
+    *,
+    sheet_name: str | None = None,
+    default_eval: str = "Соответствует",
+) -> tuple[bool, list[str]]:
+    """
+    Заполняет Таблицу 2 в ОТЧ-OQ данными из Excel по выбранным тестам.
+    Возвращает: (ok, missing_tests)
+    """
+
+    # 1) грузим Excel
+    rows_map = _load_table2_rows_from_excel(xlsx_path, sheet_name=sheet_name)
+
+    # 2) находим таблицу 2 (по заголовку столбцов)
+    def norm(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
+
+    target_table: Table | None = None
+    for t in doc.tables:
+        if not t.rows:
+            continue
+        head = " ".join(c.text for c in t.rows[0].cells)
+        h = norm(head)
+        if ("тест" in h) and ("критер" in h) and ("фактичес" in h) and ("оценк" in h):
+            target_table = t
+            break
+
+    if target_table is None:
+        return False, selected_tests[:]  # не нашли таблицу
+
+    # 3) ищем шаблонную строку с маркерами (лучший вариант)
+    token_row_idx = None
+    tokens = {"#T2_TEST", "#T2_CRIT", "#T2_FACT", "#T2_EVAL"}
+    for ri, row in enumerate(target_table.rows):
+        row_tokens = { (c.text or "").strip() for c in row.cells }
+        if tokens.issubset(row_tokens):
+            token_row_idx = ri
+            break
+
+    # если шаблонной строки нет:
+    # - если есть хотя бы 2 строки, возьмем 2ю как базовую
+    # - иначе создадим строку через add_row (стиль может быть не идеальный)
+    if token_row_idx is None:
+        if len(target_table.rows) >= 2:
+            token_row_idx = 1
+        else:
+            target_table.add_row()
+            token_row_idx = 1
+
+    base_tr = deepcopy(target_table.rows[token_row_idx]._tr)
+
+    # 4) готовим данные в порядке выбора пользователя
+    missing: list[str] = []
+    chosen_rows: list[dict] = []
+    for tname in selected_tests:
+        key = _norm_key(tname)
+        row = rows_map.get(key)
+        if not row:
+            missing.append(tname)
+            # можно пропускать, либо вставлять пустую строку — выберу пропуск
+            continue
+        chosen_rows.append(row)
+
+    # если ничего не нашли — хотя бы очистим шаблонную строку
+    need = max(1, len(chosen_rows))
+
+    # сколько строк данных сейчас начиная с token_row_idx
+    have = len(target_table.rows) - token_row_idx
+    if need > have:
+        for _ in range(need - have):
+            target_table._tbl.append(deepcopy(base_tr))
+
+    # 5) заполняем строки
+    for i in range(need):
+        row = target_table.rows[token_row_idx + i]
+        data = chosen_rows[i] if i < len(chosen_rows) else {"test": "", "crit": "", "fact": "", "eval": ""}
+
+        for cell in row.cells:
+            token = (cell.text or "").strip()
+
+            if token == "#T2_TEST":
+                _set_cell_text_keep_style(cell, data.get("test", ""))
+            elif token == "#T2_CRIT":
+                _set_cell_text_keep_style(cell, data.get("crit", ""))
+            elif token == "#T2_FACT":
+                _set_cell_text_keep_style(cell, data.get("fact", ""))
+            elif token == "#T2_EVAL":
+                ev = data.get("eval", "").strip() or default_eval
+                _set_cell_text_keep_style(cell, ev)
+            else:
+                # если маркеров нет (fallback-режим), попробуем по колонкам
+                # (тут можно оставить как есть)
+                pass
+
+    return True, missing
+
+
+def fill_report_table1_rooms_by_hashes(doc: DocxDocument, rooms: list[dict]) -> bool:
+    """
+    Ищет таблицу, где строка данных содержит маркеры:
+      #, ##, ###, ####, #$, #$$, #$$$, #%, #%%, #%%%
+    и заполняет её из rooms (num, name, klass, area, volume, dp, airflow, exchange, temp, rh).
+    """
+    token_to_key = {
+        "#": "num",
+        "##": "name",
+        "###": "klass",
+        "####": "area",
+        "#$": "volume",
+        "#$$": "dp",
+        "#$$$": "airflow",
+        "#%": "exchange",
+        "#%%": "temp",
+        "#%%%": "rh",
+    }
+
+    target_table = None
+    tmpl_row_idx = None
+
+    # 1) найти таблицу и "шаблонную" строку с #..#%%%
+    for t in doc.tables:
+        for ri, row in enumerate(t.rows):
+            row_tokens = [c.text.strip() for c in row.cells]
+            if ("#" in row_tokens) and ("##" in row_tokens) and ("#%%%" in row_tokens):
+                target_table = t
+                tmpl_row_idx = ri
+                break
+        if target_table:
+            break
+
+    if not target_table or tmpl_row_idx is None:
+        return False
+
+    # 2) копируем шаблонную строку (чтобы формат 1:1 сохранялся)
+    base_tr = deepcopy(target_table.rows[tmpl_row_idx]._tr)
+
+    need = max(1, len(rooms))  # если комнат 0 — оставим одну строку пустой
+    have = len(target_table.rows) - tmpl_row_idx
+
+    if need > have:
+        for _ in range(need - have):
+            target_table._tbl.append(deepcopy(base_tr))
+
+    # 3) заполняем
+    for i in range(need):
+        row = target_table.rows[tmpl_row_idx + i]
+        room = rooms[i] if i < len(rooms) else {}
+
+        for cell in row.cells:
+            token = (cell.text or "").strip()
+            key = token_to_key.get(token)
+            if not key:
+                continue
+            _set_cell_text_keep_style(cell, (room.get(key) or "").strip())
+
+    return True
+
+def fix_table2_caption_glue(doc: DocxDocument, caption: str = "Таблица 2") -> bool:
+    """
+    1) Удаляет пустые абзацы между подписью и таблицей
+    2) Делает таблицу inline (убирает tblpPr/tblOverlap)
+    3) КЛЮЧЕВОЕ: ставит keepNext на абзац подписи, чтобы Word не оставлял подпись сиротой
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    def norm(s: str) -> str:
+        s = (s or "").replace("\u00A0", " ")
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s
+
+    cap_p = None
+    for p in doc.paragraphs:
+        if norm(p.text) == norm(caption):
+            cap_p = p
+            break
+    if cap_p is None:
+        return False
+
+    # ✅ Главное: подпись не должна отрываться от таблицы
+    pf = cap_p.paragraph_format
+    pf.keep_with_next = True
+    pf.keep_together = True
+    pf.widow_control = True
+
+    def norm(s: str) -> str:
+        s = (s or "").replace("\u00A0", " ")
+        s = re.sub(r"\s+", " ", s).strip().lower()
+        return s
+
+    # 0) найти абзац подписи
+    cap_p = None
+    for p in doc.paragraphs:
+        if norm(p.text) == norm(caption):
+            cap_p = p
+            break
+    if cap_p is None:
+        return False
+
+    # 1) keepNext на подпись (чтобы не отрывалась от таблицы)
+    pPr = cap_p._p.get_or_add_pPr()
+    if pPr.find(qn("w:keepNext")) is None:
+        pPr.append(OxmlElement("w:keepNext"))
+
+    # (опционально) чуть безопаснее: не разрывать саму подпись
+    if pPr.find(qn("w:keepLines")) is None:
+        pPr.append(OxmlElement("w:keepLines"))
+
+    # 2) найти следующий элемент и удалить пустые абзацы между подписью и таблицей
+    p_el = cap_p._p
+    sib = p_el.getnext()
+
+    while sib is not None and sib.tag != qn("w:tbl"):
+        if sib.tag == qn("w:p"):
+            # удаляем реально пустые (в т.ч. с одними пробелами)
+            txt = "".join(t.text for t in sib.iter() if t.tag == qn("w:t"))
+            if norm(txt) == "":
+                nxt = sib.getnext()
+                sib.getparent().remove(sib)
+                sib = nxt
+                continue
+        sib = sib.getnext()
+
+    if sib is None or sib.tag != qn("w:tbl"):
+        return False
+
+    # 3) убрать "плавающее" позиционирование таблицы
+    tbl_el = sib
+    tblPr = tbl_el.find(qn("w:tblPr"))
+    if tblPr is not None:
+        for child_tag in (qn("w:tblpPr"), qn("w:tblOverlap")):
+            ch = tblPr.find(child_tag)
+            if ch is not None:
+                tblPr.remove(ch)
+
+    return True
+
+
 
 
 # =============================================================================
@@ -2151,25 +2490,33 @@ class RenderWorker(QThread):
     finished = Signal(bool, str, list)
 
     def __init__(
-        self,
-        tpl_path: str,
-        tests_doc_path: str,
-        xls_tests_path: str,
-        xls_eq_path: str,
-        out_path: str,
-        selected_tests: list[str],
-        rooms: list[dict],
-        equipment: list[dict],
-        ctx_fields: dict,
-        *,
-        risk_path: str,
-        scans_dir: str,
-        app1_images: list[str],
-        app4_images: list[str],
-        app5_images: list[str],
+            self,
+            tpl_path: str,
+            tests_doc_path: str,
+            xls_tests_path: str,
+            xls_eq_path: str,
+            out_path: str,
+            selected_tests: list[str],
+            rooms: list[dict],
+            equipment: list[dict],
+            ctx_fields: dict,
+            *,
+            risk_path: str,
+            scans_dir: str,
+            app1_images: list[str],
+            app4_images: list[str],
+            app5_images: list[str],
+
+            # NEW:
+            tpl_report_path: str | None = None,
+            out_report_path: str | None = None,
+            ctx_fields_report: dict | None = None,
+            xls_report_path: str | None = None,
     ):
         super().__init__()
+
         self.tpl_path = tpl_path
+        self.xls_report_path = xls_report_path
         self.tests_doc_path = tests_doc_path
         self.xls_tests_path = xls_tests_path
         self.xls_eq_path = xls_eq_path
@@ -2184,6 +2531,11 @@ class RenderWorker(QThread):
         self.app4_images = app4_images or []
         self.app5_images = app5_images or []
 
+        # NEW:
+        self.tpl_report_path = tpl_report_path
+        self.out_report_path = out_report_path
+        self.ctx_fields_report = ctx_fields_report
+
     def run(self):
         missing: list[str] = []
         try:
@@ -2195,6 +2547,17 @@ class RenderWorker(QThread):
             io_manager.validate_file(Path(self.xls_eq_path))
             io_manager.validate_file(Path(self.risk_path))
             Path(self.out_path).parent.mkdir(parents=True, exist_ok=True)
+
+            # второй документ (ОТЧ-OQ) — опционально
+            do_report = bool(self.tpl_report_path and self.out_report_path and self.ctx_fields_report is not None)
+            if do_report:
+                io_manager.validate_file(Path(self.tpl_report_path))
+                Path(self.out_report_path).parent.mkdir(parents=True, exist_ok=True)
+
+                if self.xls_report_path:
+                    io_manager.validate_file(Path(self.xls_report_path))
+                else:
+                    logger.warning("ОТЧ-OQ: не указан Excel-файл с данными для Таблицы 2.")
 
             # ---------- 1. Базовый контекст ----------
             step += 1
@@ -2401,13 +2764,20 @@ class RenderWorker(QThread):
                     self.progress.emit(step, "Вставка тестовых таблиц…")
                     missing = table_processor.insert_test_tables(doc, tmp_tests_path, self.selected_tests)
 
-                    # ---------- 10. Таблица 5 (Excel -> плейсхолдеры, шапку не трогаем) ----------
+                    # import word_repeat_headers  # вверху файла или прямо перед вызовом
+                    #
+                    # word_repeat_headers.split_test_results_table(
+                    #     doc,
+                    #     split_phrase="Результаты испытания",
+                    #     header_rows=2,  # у вас на скрине 2 строки шапки колонок
+                    # )
+
+                    # ---------- 10. Таблица 5 ----------
                     step += 1
                     self.progress.emit(step, "Вставка Таблицы 5 (анализ рисков)…")
                     try:
                         risk_rows = get_risk_rows(self.risk_path, self.selected_tests)
                         insert_table5_into_doc(doc, risk_rows)
-
                     except Exception as e:
                         logger.warning(f"Таблица 5 не вставлена: {e}")
 
@@ -2416,6 +2786,20 @@ class RenderWorker(QThread):
                     self.progress.emit(step, "Заполнение результатов тестов…")
                     table_processor.process_test_results_tables(doc, self.rooms)
                     _fill_test_112(doc, self.rooms)
+
+                    import word_repeat_headers
+                    word_repeat_headers.split_test_results_table(
+                        doc,
+                        split_phrase="Результаты испытания",
+                        header_rows=2,
+                        table_must_contain="Проверка расхода приточного воздуха",
+                    )
+
+                    # # после заполнения результатов
+                    # try:
+                    #     # word_test11_splitter.split_after_results_and_repeat_header(doc, header_rows=2)
+                    # except Exception as e:
+                    #     logger.warning(f"Не удалось разрезать таблицу теста 11 / повторить шапку: {e}")
 
                     step += 1
                     self.progress.emit(step, "Унификация шрифта…")
@@ -2437,17 +2821,81 @@ class RenderWorker(QThread):
                 except Exception as e:
                     logger.warning(f"Не удалось обновить поля/разрезать таблицу 5 через Word: {e}")
 
-            self.finished.emit(True, f"Документ сохранён:\n{self.out_path}", missing)
+                # ---------- 13. Рендер ОТЧ-OQ ----------
+                if do_report:
+                    step += 1
+                    self.progress.emit(step, "Рендер ОТЧ-OQ…")
+
+                    context_r = template_renderer.build_context(self.ctx_fields_report, self.rooms)
+
+                    if scan_paths:
+                        context_r["Scan_paths"] = scan_paths
+
+                    tpl_r = DocxTemplate(self.tpl_report_path)
+
+                    context_r["App1Scans"] = make_inline_images(tpl_r, self.app1_images, label="Приложение 1")
+                    context_r["App4Scans"] = make_inline_images(tpl_r, self.app4_images, label="Приложение 4")
+                    context_r["App5Scans"] = make_inline_images(tpl_r, self.app5_images, label="Приложение 5")
+                    context_r["Scans"] = make_inline_images(tpl_r, scan_paths, label="Приложение 2")
+
+                    tpl_r.render(context_r)
+
+                    with temp_docx() as tmp_r_path:
+                        tpl_r.save(tmp_r_path)
+                        doc_r = Document(tmp_r_path)
+
+                        # 1) Таблица 1 (помещения)
+                        ok1 = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
+                        if not ok1:
+                            logger.warning(
+                                "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
+
+                        # 2) Таблица 2 (из Excel по выбранным тестам)
+                        if self.xls_report_path:
+                            ok2, missing2 = fill_report_table2_from_excel(
+                                doc_r,
+                                self.selected_tests,  # порядок как выбран пользователем
+                                self.xls_report_path,
+                                default_eval="Соответствует",
+                            )
+                            if not ok2:
+                                logger.warning("ОТЧ-OQ: Таблица 2 не найдена (по заголовку/маркерам).")
+                            if missing2:
+                                logger.warning("ОТЧ-OQ: в Excel нет строк для тестов:\n" + "\n".join(missing2))
+                        else:
+                            logger.warning("ОТЧ-OQ: Excel отчёта ОТЧ-OQ не задан — Таблица 2 не заполнена.")
+
+                        # 3) Исправление разрыва: "Таблица 2" приклеить к следующей таблице
+                        try:
+                            fix_table2_caption_glue(doc_r)  # <-- ВАЖНО: функция должна быть определена
+                        except Exception as e:
+                            logger.warning(f"ОТЧ-OQ: не удалось применить fix_table2_caption_glue: {e}")
+
+                        # 4) Сохранение один раз
+                        doc_r.save(self.out_report_path)
+
+                    # если надо обновлять поля/колонтитулы через Word — можно оставить
+                    # Таблица 2: деление по странице + "Продолжение таблицы 2" + обновление полей
+                    try:
+                        word_table2_otch_splitter.update_fields_and_split_table2(self.out_report_path)
+                    except Exception as e:
+                        logger.warning(f"ОТЧ-OQ: не удалось разрезать Таблицу 2 / обновить поля через Word: {e}")
+
+                    # ✅ финальный проход: обновить ВСЁ (PAGE/NUMPAGES + TOC + поля)
+                    try:
+                        import word_update_all
+                        word_update_all.update_all(self.out_report_path)
+                    except Exception as e:
+                        logger.warning(f"ОТЧ-OQ: не удалось обновить все поля/содержание через Word: {e}")
+
+            msg = f"Документ сохранён:\n{self.out_path}"
+            if do_report and self.out_report_path:
+                msg += f"\n\nОТЧ-OQ сохранён:\n{self.out_report_path}"
+            self.finished.emit(True, msg, missing)
 
         except Exception as e:
             logger.exception("Ошибка в RenderWorker:")
             self.finished.emit(False, str(e), [])
-
-
-
-
-
-
 
 
 # =============================================================================
@@ -2904,7 +3352,30 @@ class MainWindow(QMainWindow):
         if not out_base.name:
             QMessageBox.critical(self, "Ошибка", "Не указан путь сохранения")
             return
+
         out_path = out_base.with_name(out_base.stem + f"_{mode}.docx")
+
+        # ---------- ОТЧ-OQ генерируем ТОЛЬКО вместе с OQ ----------
+        base = Path(__file__).resolve().parents[1]
+        tpl_report_path = None
+        out_report_path = None
+        ctx_fields_report = None
+        xls_report_path = None
+
+        if mode == "OQ":
+            # шаблон отчёта лежит в корне проекта
+            candidate_tpl = base / "Шаблон ОТЧ-OQ.docx"
+            if candidate_tpl.exists():
+                tpl_report_path = str(candidate_tpl)
+                out_report_path = str(out_base.with_name(out_base.stem + f"_{mode}_ОТЧ-OQ.docx"))
+            else:
+                logger.warning(f"Шаблон отчёта ОТЧ-OQ не найден: {candidate_tpl}")
+
+            candidate_xls = base / "ОТЧ-OQ.xlsx"  # имя файла поменяй под свой
+            if candidate_xls.exists():
+                xls_report_path = str(candidate_xls)
+            else:
+                logger.warning(f"Excel отчёта ОТЧ-OQ не найден: {candidate_xls}")
 
         missing_fields = []
         if not tpl_path:
@@ -2924,12 +3395,36 @@ class MainWindow(QMainWindow):
             for s in sel_tests_raw if isinstance(s, str) and s.strip()
         ]
 
-        raw_prt = self.prt_input.text().strip()
-        prt_norm = raw_prt.upper()
-        for pref in ("ПРТ-OQ-", "ПРТ-PQ-"):
-            prt_norm = prt_norm.replace(pref, "")
-        full_prt = f"ПРТ-{mode}-{prt_norm}" if prt_norm else ""
-        prt = RichText(full_prt, bold=False, italic=False, underline=False)
+        def _norm_doc_id(raw: str) -> str:
+            s = (raw or "").strip().upper()
+            # если пользователь вставил уже с префиксом — срежем
+            prefixes = (
+                "ПРТ-OQ-", "ПРТ-PQ-", "ПРТ-IQ-",
+                "ОТЧ-OQ-", "ОТЧ-PQ-", "ОТЧ-IQ-",
+                "ПРТ-", "ОТЧ-",
+            )
+            for p in prefixes:
+                if s.startswith(p):
+                    s = s[len(p):]
+                    break
+            return s
+
+        doc_id = _norm_doc_id(self.prt_input.text())
+
+        # для основного документа (OQ/PQ)
+        prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # для отчёта ОТЧ-OQ
+        prt_report = RichText(f"ОТЧ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # ✅ ВОТ ЭТО ДОБАВЬ: для {{prt1}} в Шаблон ОТЧ-OQ.docx
+        prt1_report = RichText(f"ПРТ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # для основного документа (OQ/PQ): {{prt}} = ПРТ-<ввод>
+        prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+
+        # для отчёта ОТЧ-OQ: {{prt}} = ОТЧ-OQ-<ввод>
+        prt_report = RichText(f"ОТЧ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
 
         object_text = self.object_input.text().strip()
         object_rd = ""
@@ -2980,6 +3475,11 @@ class MainWindow(QMainWindow):
             "Тесты_маркированным_списком": RichText("\n".join(f"• {t}" for t in sel_tests), bold=False),
         }
 
+        if mode == "OQ" and tpl_report_path and out_report_path:
+            ctx_fields_report = dict(ctx_fields)
+            ctx_fields_report["prt"] = prt_report
+            ctx_fields_report["prt1"] = prt1_report
+
         self.setEnabled(False)
         self.progress_bar.setValue(0)
 
@@ -2991,7 +3491,14 @@ class MainWindow(QMainWindow):
             app1_images=app1_images,
             app4_images=app4_images,
             app5_images=app5_images,
+
+            # ОТЧ-OQ (только для OQ):
+            tpl_report_path=tpl_report_path,
+            out_report_path=out_report_path,
+            ctx_fields_report=ctx_fields_report,
+            xls_report_path=xls_report_path,
         )
+
         self.worker.progress.connect(self.on_progress)
         self.worker.finished.connect(self.on_finished)
         self.worker.start()
@@ -3038,7 +3545,6 @@ if __name__ == "__main__":
     main()
 
 
-
 from PySide6.QtWidgets import QMainWindow, QLabel
 from PySide6.QtCore import Qt
 
@@ -3053,7 +3559,6 @@ class OldCleanroomWindow(QMainWindow):
 
 def launch_old_app():
     return OldCleanroomWindow()
-
 
 # ui/rooms_table.py  (новый файл)
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QApplication
@@ -3258,6 +3763,230 @@ class PathEdit(QWidget):
             self.setText(str(Path(p).resolve()))
 
 
+from __future__ import annotations
+
+import re
+from typing import Optional
+
+import win32com.client as win32
+from win32com.client import constants as c
+
+
+def _clean_cell_text(s: str) -> str:
+    # Word возвращает текст ячейки с '\r\x07'
+    s = (s or "").replace("\r", "").replace("\x07", "")
+    s = s.replace("\u00A0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _norm(s: str) -> str:
+    return _clean_cell_text(s).lower().replace("ё", "е")
+
+
+def _looks_like_table2(word_table) -> bool:
+    """
+    Узнаём Таблицу 2 по шапке:
+    'Тест', 'Критерий приемлемости', 'Фактические результаты', 'Оценка'
+    """
+    try:
+        if word_table.Rows.Count < 1:
+            return False
+        row1 = word_table.Rows(1)
+        head = " ".join(_clean_cell_text(cell.Range.Text) for cell in row1.Cells)
+        h = _norm(head)
+        return ("тест" in h and "критер" in h and "фактичес" in h and "оценк" in h)
+    except Exception:
+        return False
+
+
+def _insert_continuation_block_before_table(word_app, doc, table, title: str) -> None:
+    """
+    Вставляет ПЕРЕД table:
+      - абзац 'Продолжение таблицы 2' (TNR12 bold, справа)
+      - абзац начинается С НОВОЙ СТРАНИЦЫ (PageBreakBefore=True)
+    ВАЖНО: гарантированно вставляем ВНЕ таблицы (не в ячейку).
+    """
+    sel = word_app.Selection
+
+    # Ставим курсор в начало новой таблицы
+    sel.SetRange(table.Range.Start, table.Range.Start)
+
+    # Гарантированно выходим из таблицы в "параграф-якорь" перед ней
+    # Иногда Word держит Range внутри первой ячейки — выходим MoveLeft'ом.
+    guard = 0
+    while sel.Information(c.wdWithInTable) and guard < 50:
+        sel.MoveLeft(Unit=c.wdCharacter, Count=1)
+        guard += 1
+
+    # Теперь мы вне таблицы: вставляем абзац перед таблицей
+    sel.InsertParagraphAfter()          # создаём параграф перед таблицей
+    sel.MoveUp(Unit=c.wdParagraph, Count=1)
+
+    # Настраиваем абзац как "начало новой страницы"
+    sel.ParagraphFormat.PageBreakBefore = True
+    sel.ParagraphFormat.Alignment = c.wdAlignParagraphRight
+    sel.ParagraphFormat.SpaceBefore = 0
+    sel.ParagraphFormat.SpaceAfter = 0
+
+    # Текст + шрифт
+    sel.Font.Name = "Times New Roman"
+    sel.Font.Size = 12
+    sel.Font.Bold = True
+    sel.TypeText(title)
+
+    # Важно: НЕ InsertBreak() — иначе может появляться пустая страница
+    # И НЕ InsertParagraphAfter() — иначе появится лишняя пустая строка
+
+
+def split_table2_with_continuation_word(
+    docx_path: str,
+    *,
+    continuation_title: str = "Продолжение таблицы 2",
+    header_rows_count: int = 1,
+    max_splits: int = 20,
+) -> bool:
+    """
+    Режет Таблицу 2 по фактическому переносу на следующую страницу (через Word пагинацию).
+    Возвращает True если хотя бы один разрез сделан.
+    """
+    word = win32.gencache.EnsureDispatch("Word.Application")
+    word.Visible = False
+
+    did_any = False
+    try:
+        doc = word.Documents.Open(str(docx_path))
+
+        # если уже есть "Продолжение таблицы 2" — не плодим дубли
+        if continuation_title in _clean_cell_text(doc.Content.Text):
+            doc.Close(SaveChanges=False)
+            return False
+
+        doc.Repaginate()
+
+        # найдём таблицу 2
+        t2 = None
+        for t in doc.Tables:
+            if _looks_like_table2(t):
+                t2 = t
+                break
+
+        if t2 is None:
+            doc.Close(SaveChanges=False)
+            return False
+
+        # сделаем шапку повторяемой
+        try:
+            for i in range(1, header_rows_count + 1):
+                t2.Rows(i).HeadingFormat = True
+        except Exception:
+            pass
+
+        splits_done = 0
+        cur_table = t2
+
+        while splits_done < max_splits:
+            doc.Repaginate()
+
+            # страница, на которой заканчивается шапка
+            base_page = cur_table.Rows(header_rows_count).Range.Information(c.wdActiveEndPageNumber)
+
+            # найдём первую строку данных, которая ушла на следующую страницу
+            split_row_idx: Optional[int] = None
+            for ri in range(header_rows_count + 1, cur_table.Rows.Count + 1):
+                pg = cur_table.Rows(ri).Range.Information(c.wdActiveEndPageNumber)
+                if pg > base_page:
+                    split_row_idx = ri
+                    break
+
+            if split_row_idx is None:
+                break  # таблица целиком помещается на странице
+
+            # 1) Копируем текущую таблицу после неё же
+            count_before = doc.Tables.Count
+            ins = cur_table.Range
+            ins.Collapse(c.wdCollapseEnd)
+            ins.InsertParagraphAfter()
+            ins.Collapse(c.wdCollapseEnd)
+
+            cur_table.Range.Copy()
+            ins.PasteAndFormat(c.wdFormatOriginalFormatting)
+
+            new_table = doc.Tables(count_before + 1)
+
+            # 2) В НОВОЙ таблице удаляем строки ДО split_row_idx (кроме шапки)
+            for _ in range((split_row_idx - 1) - header_rows_count):
+                new_table.Rows(header_rows_count + 1).Delete()
+
+            # 3) В СТАРОЙ таблице удаляем строки split_row_idx..конец
+            while cur_table.Rows.Count >= split_row_idx:
+                cur_table.Rows(split_row_idx).Delete()
+
+            # 4) Вставляем "Продолжение таблицы 2" ПЕРЕД новой таблицей (вне таблицы!)
+            _insert_continuation_block_before_table(word, doc, new_table, continuation_title)
+
+            # 5) Повторяемая шапка для новой таблицы
+            try:
+                for i in range(1, header_rows_count + 1):
+                    new_table.Rows(i).HeadingFormat = True
+            except Exception:
+                pass
+
+            did_any = True
+            splits_done += 1
+            cur_table = new_table
+
+        doc.Save()
+        doc.Close()
+        return did_any
+
+    finally:
+        word.Quit()
+
+
+def update_fields_and_split_table2(
+    docx_path: str,
+    *,
+    continuation_title: str = "Продолжение таблицы 2",
+    header_rows_count: int = 1,
+) -> bool:
+    """
+    1) Режет Таблицу 2 по фактическому переносу страницы (через Word).
+    2) Обновляет поля документа + колонтитулы.
+    Возвращает True если были сделаны разрезы.
+    """
+    did_split = split_table2_with_continuation_word(
+        docx_path,
+        continuation_title=continuation_title,
+        header_rows_count=header_rows_count,
+    )
+
+    # Обновление полей/колонтитулов отдельным проходом (надежно)
+    word = win32.gencache.EnsureDispatch("Word.Application")
+    word.Visible = False
+    try:
+        doc = word.Documents.Open(str(docx_path))
+        doc.Repaginate()
+
+        doc.Fields.Update()
+        for sec in doc.Sections:
+            try:
+                sec.Headers(1).Range.Fields.Update()
+            except Exception:
+                pass
+            try:
+                sec.Footers(1).Range.Fields.Update()
+            except Exception:
+                pass
+
+        doc.Save()
+        doc.Close()
+    finally:
+        word.Quit()
+
+    return did_split
+
+
 # file_utils.py
 from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
@@ -3410,6 +4139,7 @@ ch.setFormatter(fmt)
 logger.addHandler(ch)
 
 
+
 # main.py
 import sys
 from PySide6.QtWidgets import QApplication
@@ -3424,6 +4154,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 from __future__ import annotations
 
@@ -4055,12 +4787,93 @@ class AppendixImagesDialog(QDialog):
     def get_paths(self) -> list[str]:
         return self.list.get_paths()
 
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
+def _cell_center_no_indent(cell):
+    """
+    Делает:
+      - текст без табов/неразрывных пробелов
+      - выравнивание по центру
+      - убирает абзацные отступы
+      - убирает внутренние поля ячейки (tcMar), которые обычно и дают "сдвиг"
+      - фиксирует jc=center на уровне XML (чтобы стиль не перебил)
+    """
+    import re
+
+    txt = (cell.text or "")
+    txt = txt.replace("\t", "").replace("\u00A0", " ")
+    txt = re.sub(r"\s+\n", "\n", txt)
+    txt = re.sub(r"\n\s+", "\n", txt)
+    txt = txt.strip()
+
+    # ВАЖНО: text пересоздаёт абзацы -> форматируем уже после
+    cell.text = txt
+
+    # абзацы: центр + без отступов/таба
+    for p in cell.paragraphs:
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        pf = p.paragraph_format
+        pf.left_indent = 0
+        pf.right_indent = 0
+        pf.first_line_indent = 0
+        pf.space_before = 0
+        pf.space_after = 0
+
+        pPr = p._p.get_or_add_pPr()
+
+        # убрать tabs
+        tabs = pPr.find(qn("w:tabs"))
+        if tabs is not None:
+            pPr.remove(tabs)
+
+        # убрать ind
+        ind = pPr.find(qn("w:ind"))
+        if ind is not None:
+            pPr.remove(ind)
+
+        # жёстко: center в XML
+        jc = pPr.find(qn("w:jc"))
+        if jc is None:
+            jc = OxmlElement("w:jc")
+            pPr.append(jc)
+        jc.set(qn("w:val"), "center")
+
+    # убрать внутренние поля ячейки (это то, что чаще всего визуально мешает "центру")
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcMar = tcPr.find(qn("w:tcMar"))
+    if tcMar is None:
+        tcMar = OxmlElement("w:tcMar")
+        tcPr.append(tcMar)
+
+    def _set_mar(tag: str):
+        el = tcMar.find(qn(f"w:{tag}"))
+        if el is None:
+            el = OxmlElement(f"w:{tag}")
+            tcMar.append(el)
+        el.set(qn("w:w"), "0")
+        el.set(qn("w:type"), "dxa")
+
+    _set_mar("left")
+    _set_mar("right")
+
+    # опционально: вертикальный центр
+    vAlign = tcPr.find(qn("w:vAlign"))
+    if vAlign is None:
+        vAlign = OxmlElement("w:vAlign")
+        tcPr.append(vAlign)
+    vAlign.set(qn("w:val"), "center")
 
 # === Автозаполнение "Тест 11.2. Проверка кратности воздухообмена в ЧП" ===
 def _fill_test_112(doc, rooms):
+    import re
+
     def norm(s: str) -> str:
         return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
 
+    # 1) находим таблицу теста 11.2
     t112 = None
     for t in doc.tables:
         if not t.rows:
@@ -4073,21 +4886,32 @@ def _fill_test_112(doc, rooms):
     if t112 is None:
         return
 
+    # 2) находим строку, где начинаются названия колонок (после "Результаты испытания")
     hdr_cols_row_idx = None
     for i, row in enumerate(t112.rows):
-        # тут обычно merge'ей нет; оставляем как было
         line = norm(" ".join(c.text for c in row.cells))
         if "результаты испытани" in line:
             hdr_cols_row_idx = i + 1 if (i + 1) < len(t112.rows) else None
             break
+
     if hdr_cols_row_idx is None:
         for i, row in enumerate(t112.rows):
             line = norm(" ".join(c.text for c in row.cells))
             if ("номер" in line and "объем" in line) or ("общий расход" in line):
                 hdr_cols_row_idx = i
                 break
+
     if hdr_cols_row_idx is None:
         return
+
+    # 3) ВАЖНО: из-за merge/gridSpan "Общий расход" может встречаться несколько раз.
+    def find_cols(cells, *needles):
+        out = []
+        for ci, c in enumerate(cells):
+            tt = norm(c.text)
+            if all(n in tt for n in needles):
+                out.append(ci)
+        return out
 
     def find_col(cells, *needles):
         for ci, c in enumerate(cells):
@@ -4097,22 +4921,23 @@ def _fill_test_112(doc, rooms):
         return None
 
     cols_row = t112.rows[hdr_cols_row_idx]
-    col_total = find_col(cols_row.cells, "общий", "расход")
+    col_totals = find_cols(cols_row.cells, "общий", "расход")     # <-- список
     col_fact = find_col(cols_row.cells, "фактическ")
-    if col_total is None and col_fact is None:
+
+    if not col_totals and col_fact is None:
         return
 
+    # 4) Удаляем "пустую строку" от docxtpl (строка где был отдельный {% for %})
     def is_spacer(row):
         return all(norm(c.text) in ("", "¤") for c in row.cells)
 
-    # В таблице 11.2 шапка занимает 2 строки (строка заголовков + строка подзаголовков)
+    # Шапка занимает 2 строки: заголовки + подзаголовки
     data_start = hdr_cols_row_idx + 2
 
-    # docxtpl оставляет пустой tr там, где был отдельной строкой "{% for room in rooms %}"
-    # Его нужно УДАЛИТЬ из таблицы, иначе Word показывает "пустую строку".
     while data_start < len(t112.rows) and is_spacer(t112.rows[data_start]):
-        t112._tbl.remove(t112.rows[data_start]._tr)  # <- удаляем строку, а не сдвигаем индекс
+        t112._tbl.remove(t112.rows[data_start]._tr)
 
+    # 5) граница данных - до "КОММЕНТАРИИ"
     data_end = len(t112.rows)
     for i in range(data_start, len(t112.rows)):
         first_cell = norm(t112.rows[i].cells[0].text)
@@ -4122,6 +4947,7 @@ def _fill_test_112(doc, rooms):
     if data_end <= data_start:
         return
 
+    # 6) если помещений больше, чем строк - дополняем копиями последней строки данных
     need = len(rooms)
     have = data_end - data_start
     if need > have:
@@ -4131,18 +4957,37 @@ def _fill_test_112(doc, rooms):
             t112._tbl.append(deepcopy(sample_tr))
         data_end = data_start + need
 
+    # 7) заполняем
     for idx, room in enumerate(rooms):
         r = data_start + idx
         if r >= len(t112.rows):
             break
+
         row = t112.rows[r]
         total_flow = (room.get("total_flow") or "").strip()
         exch_act = (room.get("exchange_actual") or "").strip()
 
-        if col_total is not None and col_total < len(row.cells) and total_flow:
-            row.cells[col_total].text = total_flow
+        # общий расход: записываем (если есть) и ВСЕГДА форматируем все найденные колонки
+        for ci in col_totals:
+            if ci < len(row.cells):
+                cell = row.cells[ci]
+                if total_flow:
+                    cell.text = total_flow
+                _cell_center_no_indent(cell)
+
+        # фактическая: заполняем как было
         if col_fact is not None and col_fact < len(row.cells) and exch_act:
             row.cells[col_fact].text = exch_act
+
+
+
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+import re
+
+
+
 
 
 # ===================== DOCX equipment date postprocess =====================
@@ -4280,322 +5125,7 @@ def update_fields_only_with_word(docx_path: str) -> None:
 
 
 # ===================== Render Worker =====================
-class RenderWorker(QThread):
-    progress = Signal(int, str)
-    finished = Signal(bool, str, list)
 
-    def __init__(
-        self,
-        tpl_path: str,
-        tests_doc_path: str,
-        xls_tests_path: str,
-        xls_eq_path: str,
-        out_path: str,
-        selected_tests: list[str],
-        rooms: list[dict],
-        equipment: list[dict],
-        ctx_fields: dict,
-        *,
-        scans_dir: str,
-        app1_images: list[str],
-        app4_images: list[str],
-    ):
-        super().__init__()
-        self.tpl_path = tpl_path
-        self.tests_doc_path = tests_doc_path
-        self.xls_tests_path = xls_tests_path
-        self.xls_eq_path = xls_eq_path
-        self.out_path = out_path
-        self.selected_tests = selected_tests
-        self.rooms = rooms
-        self.equipment = equipment
-        self.ctx_fields = ctx_fields
-        self.scans_dir = scans_dir
-        self.app1_images = app1_images or []
-        self.app4_images = app4_images or []
-
-    def run(self):
-        missing: list[str] = []
-        try:
-            step = 0
-            self.progress.emit(step, "Валидация файлов…")
-            io_manager.validate_file(Path(self.tpl_path))
-            io_manager.validate_file(Path(self.tests_doc_path))
-            io_manager.validate_file(Path(self.xls_tests_path))
-            io_manager.validate_file(Path(self.xls_eq_path))
-            Path(self.out_path).parent.mkdir(parents=True, exist_ok=True)
-
-            step += 1
-            self.progress.emit(step, "Сбор контекста…")
-            context = template_renderer.build_context(self.ctx_fields, self.rooms)
-
-            step += 1
-            self.progress.emit(step, "Сбор сканов оборудования…")
-            scan_paths: list[str] = []
-
-            def _serial_key(s: str) -> str:
-                return re.sub(r'[^0-9a-zA-Z]+', '', (s or '')).lower()
-
-            if self.equipment and self.scans_dir:
-                for eq in self.equipment:
-                    name_sn = eq.get("name_sn", "")
-                    try:
-                        _, serial = [p.strip() for p in name_sn.rsplit(",", 1)]
-                    except ValueError:
-                        serial = name_sn.strip()
-
-                    key = _serial_key(serial)
-                    found = None
-                    for root, _, files in os.walk(self.scans_dir):
-                        for fn in files:
-                            if Path(fn).suffix.lower() not in (".jpg", ".jpeg", ".png", ".pdf", ".bmp", ".gif", ".tif", ".tiff"):
-                                continue
-                            if _serial_key(Path(fn).stem) == key:
-                                found = os.path.join(root, fn)
-                                break
-                        if found:
-                            scan_paths.append(found)
-                            break
-
-            if scan_paths:
-                context["Scan_paths"] = scan_paths
-
-            step += 1
-            self.progress.emit(step, "Рендер тестового документа…")
-            tpl_tests = DocxTemplate(self.tests_doc_path)
-            tpl_tests.render(context)
-
-            with temp_docx() as tmp_tests_path:
-                tpl_tests.save(tmp_tests_path)
-                tests_doc_parsed = Document(tmp_tests_path)
-
-                def _safe_row_cell_texts(row) -> list[str]:
-                    """
-                    Безопасно возвращает тексты ячеек строки.
-                    row.cells иногда падает на таблицах с вертикальными merge'ами.
-                    """
-                    try:
-                        return [c.text for c in row.cells]
-                    except Exception:
-                        tcs = row._tr.xpath("./w:tc")
-                        out: list[str] = []
-                        for tc in tcs:
-                            parts = tc.xpath(".//w:t")
-                            out.append("".join((p.text or "") for p in parts))
-                        return out
-
-                def _robust_extract_total_flows_from_test11(docx_doc):
-                    flows: list[Decimal | None] = []
-
-                    def norm(s: str) -> str:
-                        return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
-
-                    def to_dec(s: str) -> Decimal | None:
-                        s = (s or "").strip().replace("\u00a0", "").replace(" ", "").replace(",", ".")
-                        try:
-                            return Decimal(s)
-                        except InvalidOperation:
-                            return None
-
-                    for t in docx_doc.tables:
-                        if not t.rows:
-                            continue
-
-                        head = " ".join(_safe_row_cell_texts(t.rows[0]))
-                        h = norm(head)
-
-                        if "проверка" in h and "расхода" in h and "приточ" in h:
-                            hdr_idx = None
-                            for i, row in enumerate(t.rows):
-                                row_text = norm(" ".join(_safe_row_cell_texts(row)))
-                                if "результаты испытани" in row_text:
-                                    hdr_idx = i + 1 if (i + 1) < len(t.rows) else None
-                                    break
-                            if hdr_idx is None:
-                                continue
-
-                            rows_for_header = [t.rows[hdr_idx]]
-                            if hdr_idx + 1 < len(t.rows):
-                                rows_for_header.append(t.rows[hdr_idx + 1])
-
-                            def col_idx(*needles):
-                                for row in rows_for_header:
-                                    cells_txt = _safe_row_cell_texts(row)
-                                    for ci, txt in enumerate(cells_txt):
-                                        tt = norm(txt)
-                                        if all(n in tt for n in needles):
-                                            return ci
-                                return None
-
-                            col_fact = col_idx("фактическ")
-                            col_sum = col_idx("фактическ", "суммарн")
-
-                            cur_sum: Decimal | None = None
-                            room_started = False
-                            data_start = hdr_idx + (2 if len(rows_for_header) == 2 else 1)
-
-                            for r in range(data_start, len(t.rows)):
-                                row = t.rows[r]
-                                cells_txt = _safe_row_cell_texts(row)
-                                row_text = norm(" ".join(cells_txt))
-
-                                if row_text.startswith("комментар"):
-                                    if room_started:
-                                        flows.append(cur_sum)
-                                    break
-
-                                if row_text.startswith("помещение"):
-                                    if room_started:
-                                        flows.append(cur_sum)
-                                    room_started = True
-                                    cur_sum = None
-                                    continue
-
-                                if not room_started:
-                                    continue
-
-                                if col_sum is not None and col_sum < len(cells_txt):
-                                    v = to_dec(cells_txt[col_sum])
-                                    if v is not None:
-                                        cur_sum = v
-                                        continue
-
-                                if col_fact is not None and col_fact < len(cells_txt):
-                                    v = to_dec(cells_txt[col_fact])
-                                    if v is not None:
-                                        cur_sum = (cur_sum or Decimal("0")) + v
-
-                            if room_started:
-                                flows.append(cur_sum)
-
-                    return flows
-
-                _total1 = table_processor.extract_total_flows_from_test11(tests_doc_parsed)
-                total_flows = (
-                    _total1 if (_total1 and any(v is not None for v in _total1))
-                    else _robust_extract_total_flows_from_test11(tests_doc_parsed)
-                )
-
-                for idx, room in enumerate(self.rooms):
-                    if idx < len(total_flows) and total_flows[idx] is not None:
-                        val = total_flows[idx].quantize(Decimal("1.00"))
-                        room["total_flow"] = f"{val}".replace(".", ",")
-                    else:
-                        pr = (room.get("airflow") or "").strip().replace(" ", "").replace("\u00a0", "")
-                        pr = pr.replace(".", ",")
-                        try:
-                            q = Decimal(pr.replace(",", ".")).quantize(Decimal("1.00"))
-                            room["total_flow"] = f"{q}".replace(".", ",")
-                        except InvalidOperation:
-                            room["total_flow"] = pr or ""
-
-                    vol_raw = (room.get("volume") or "").replace(",", ".")
-                    try:
-                        vol = Decimal(vol_raw)
-                        tf_raw = (room.get("total_flow") or "").replace(",", ".")
-                        tf = Decimal(tf_raw) if tf_raw else None
-                        if vol and vol > 0 and tf is not None:
-                            exch = tf / vol
-                            room["exchange_actual"] = str(exch.quantize(Decimal("1.00"))).replace(".", ",")
-                        else:
-                            room["exchange_actual"] = ""
-                    except (InvalidOperation, ZeroDivisionError):
-                        room["exchange_actual"] = ""
-
-                context = template_renderer.build_context(self.ctx_fields, self.rooms)
-                if scan_paths:
-                    context["Scan_paths"] = scan_paths
-
-                step += 1
-                self.progress.emit(step, "Перерендер тестовых таблиц с расчётами…")
-                tpl_tests2 = DocxTemplate(self.tests_doc_path)
-                tpl_tests2.render(context)
-                tpl_tests2.save(tmp_tests_path)
-
-                step += 1
-                self.progress.emit(step, "Рендер основного шаблона…")
-                tpl_main = DocxTemplate(self.tpl_path)
-
-                def _make_inline_images(paths: list[str], label: str) -> list[InlineImage]:
-                    out: list[InlineImage] = []
-                    for p in (paths or []):
-                        pp = Path(p)
-                        ext = pp.suffix.lower()
-
-                        if not pp.exists():
-                            logger.warning(f"[{label}] файл не найден: {p}")
-                            continue
-
-                        if ext not in DOCX_IMG_EXT:
-                            logger.warning(f"[{label}] пропущен неподдерживаемый формат {ext}: {p}")
-                            continue
-
-                        try:
-                            out.append(InlineImage(tpl_main, str(pp), width=Mm(160)))
-                        except UnrecognizedImageError:
-                            logger.warning(f"[{label}] UnrecognizedImageError (битый/не картинка): {p}")
-                        except Exception as e:
-                            logger.warning(f"[{label}] не удалось вставить {p}: {e}")
-
-                    return out
-
-                context["App1Scans"] = _make_inline_images(self.app1_images, "Приложение 1")
-                context["App4Scans"] = _make_inline_images(self.app4_images, "Приложение 4")
-
-                scans_img_paths: list[str] = []
-                for p in scan_paths:
-                    pp = Path(p)
-                    if pp.exists() and pp.suffix.lower() in DOCX_IMG_EXT:
-                        scans_img_paths.append(str(pp))
-                    else:
-                        logger.warning(f"[Приложение 2] пропущен (неподдерживаемый/не найден/PDF/TIFF): {p}")
-
-                context["Scans"] = _make_inline_images(scans_img_paths, "Приложение 2")
-
-                tpl_main.render(context)
-
-                with temp_docx() as tmp_main_path:
-                    tpl_main.save(tmp_main_path)
-                    doc = Document(tmp_main_path)
-
-                    step += 1
-                    self.progress.emit(step, "Обработка таблицы помещений…")
-                    table_processor.process_rooms_table(doc, self.rooms)
-
-                    step += 1
-                    self.progress.emit(step, "Обработка таблицы оборудования…")
-                    table_processor.process_equipment_table(doc, self.equipment)
-
-                    postprocess_equipment_dates(doc)
-
-                    step += 1
-                    self.progress.emit(step, "Вставка тестовых таблиц…")
-                    missing = table_processor.insert_test_tables(doc, tmp_tests_path, self.selected_tests)
-
-                    step += 1
-                    self.progress.emit(step, "Заполнение результатов тестов…")
-                    table_processor.process_test_results_tables(doc, self.rooms)
-
-                    _fill_test_112(doc, self.rooms)
-
-                    step += 1
-                    self.progress.emit(step, "Унификация шрифта…")
-                    table_processor.enforce_tnr_face_only_everywhere(doc)
-
-                    step += 1
-                    self.progress.emit(step, "Сохранение…")
-                    doc.save(self.out_path)
-
-                try:
-                    word_table5_splitter.update_fields_with_word(self.out_path)
-                except Exception as e:
-                    logger.warning(f"Не удалось обновить поля через Word: {e}")
-
-            self.finished.emit(True, f"Документ сохранён:\n{self.out_path}", missing)
-
-        except Exception as e:
-            logger.exception("Ошибка в RenderWorker:")
-            self.finished.emit(False, str(e), [])
 
 
 # ===================== Main Window =====================
@@ -5287,7 +5817,6 @@ def apply_compact_style(app: QApplication) -> None:
             padding: 0 4px;
         }
     """)
-
 
 
 # risk_table5.py
@@ -6593,6 +7122,7 @@ def process_test_results_tables(doc: Document, rooms: List[Dict[str, str]]) -> N
     logger.debug("process_test_results_tables завершён")
 
 
+
 # template_renderer.py
 
 from typing import Dict, Any, List, Optional
@@ -6697,6 +7227,119 @@ def render_template(
         doc = Document(tmp)
         logger.info("Шаблон отререндерен во временный файл")
         return doc
+
+
+
+# word_repeat_headers.py
+from __future__ import annotations
+
+import re
+from copy import deepcopy
+from typing import Optional
+
+from docx.document import Document as DocxDocument
+from docx.table import Table
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+
+
+def _norm(s: str) -> str:
+    s = "" if s is None else str(s)
+    s = (
+        s.replace("\u00A0", " ")
+         .replace("\u202F", " ")
+         .replace("\u200B", "")
+         .replace("\u00AD", "")
+    )
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return s.replace("ё", "е")
+
+
+def _row_text(row) -> str:
+    return _norm(" ".join(c.text for c in row.cells))
+
+
+def _mark_tr_as_header(tr_el) -> None:
+    trPr = tr_el.find(qn("w:trPr"))
+    if trPr is None:
+        trPr = OxmlElement("w:trPr")
+        tr_el.insert(0, trPr)
+
+    if trPr.find(qn("w:tblHeader")) is None:
+        trPr.append(OxmlElement("w:tblHeader"))
+
+
+def split_test_results_table(
+    doc: DocxDocument,
+    *,
+    split_phrase: str = "Результаты испытания",
+    header_rows: int = 2,
+    table_must_contain: Optional[str] = None,
+) -> int:
+    """
+    Разрезает таблицы так, чтобы строка ПОСЛЕ 'split_phrase' стала первой строкой новой таблицы.
+    Затем помечает первые header_rows строк новой таблицы как повторяемый заголовок (tblHeader).
+
+    Возвращает количество разрезанных таблиц.
+    """
+    split_key = _norm(split_phrase)
+    must_key = _norm(table_must_contain) if table_must_contain else None
+
+    changed = 0
+
+    for t in doc.tables:
+        if not t.rows:
+            continue
+
+        if must_key:
+            whole = _norm(" ".join(_row_text(r) for r in t.rows[: min(len(t.rows), 6)]))
+            if must_key not in whole:
+                continue
+
+        marker_idx = None
+        for i, row in enumerate(t.rows):
+            if split_key in _row_text(row):
+                marker_idx = i
+                break
+
+        if marker_idx is None:
+            continue
+
+        start_new = marker_idx + 1
+        if start_new >= len(t.rows):
+            continue  # нечего переносить
+
+        # XML таблицы и строки
+        tbl_el = t._tbl
+        tr_elems = tbl_el.xpath("./w:tr")
+        if len(tr_elems) != len(t.rows):
+            continue
+
+        # Копия таблицы -> будущая "новая таблица"
+        new_tbl_el = deepcopy(tbl_el)
+        new_tr_elems = new_tbl_el.xpath("./w:tr")
+
+        # В НОВОЙ таблице оставляем строки начиная с start_new
+        for i in range(len(new_tr_elems) - 1, -1, -1):
+            if i < start_new:
+                new_tbl_el.remove(new_tr_elems[i])
+
+        # В СТАРОЙ таблице оставляем строки до start_new-1 (включая 'Результаты испытания')
+        for i in range(len(tr_elems) - 1, -1, -1):
+            if i >= start_new:
+                tbl_el.remove(tr_elems[i])
+
+        # Пометить первые header_rows строк новой таблицы как повторяемый заголовок
+        new_tr_elems2 = new_tbl_el.xpath("./w:tr")
+        for i in range(min(header_rows, len(new_tr_elems2))):
+            _mark_tr_as_header(new_tr_elems2[i])
+
+        # Вставить новую таблицу сразу после старой
+        tbl_el.addnext(new_tbl_el)
+
+        changed += 1
+
+    return changed
 
 
 
@@ -7309,6 +7952,319 @@ def update_fields_with_word(docx_path: str) -> None:
         except Exception:
             pass
         pythoncom.CoUninitialize()
+
+
+
+
+# word_test11_splitter.py
+from __future__ import annotations
+
+import re
+from copy import deepcopy
+from typing import Optional
+
+from docx.document import Document as DocxDocument
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.table import Table
+
+
+def _norm(s: str) -> str:
+    s = "" if s is None else str(s)
+    s = s.replace("\u00A0", " ").replace("\u202F", " ").replace("ё", "е")
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return s
+
+
+def _tbl_looks_like_test11_results(tbl: Table) -> bool:
+    """
+    Очень мягкая проверка, чтобы не резать "левые" таблицы:
+    ищем в таблице признаки шапки результатов теста 11.
+    """
+    if not tbl.rows:
+        return False
+    # проверим первые ~10 строк на ключевые слова
+    probe_rows = tbl.rows[: min(10, len(tbl.rows))]
+    txt = " ".join(_norm(c.text) for r in probe_rows for c in r.cells)
+    return ("результаты испытания" in txt) and ("фильтр" in txt) and ("расход" in txt)
+
+
+def _set_repeat_header_rows_on_tbl_el(tbl_el, header_rows: int) -> None:
+    """
+    Ставит флаг "повторять как заголовок" на первые header_rows строк XML-таблицы.
+    Работает напрямую с XML, без необходимости получать объект Table.
+    """
+    trs = tbl_el.xpath("./w:tr")
+    for tr in trs[: max(0, header_rows)]:
+        trPr = tr.find(qn("w:trPr"))
+        if trPr is None:
+            trPr = OxmlElement("w:trPr")
+            tr.insert(0, trPr)
+
+        if trPr.find(qn("w:tblHeader")) is None:
+            trPr.append(OxmlElement("w:tblHeader"))
+
+
+def split_after_results_and_repeat_header(
+    doc: DocxDocument,
+    *,
+    header_rows: int = 2,
+    results_row_text: str = "Результаты испытания",
+) -> bool:
+    """
+    Находит таблицу результатов "Проверка расхода приточного воздуха",
+    ищет строку "Результаты испытания" и РЕЖЕТ таблицу так, что
+    строка СРАЗУ ПОСЛЕ неё становится ПЕРВОЙ строкой новой таблицы.
+
+    Далее ставит повтор заголовка (tblHeader) на первые header_rows строк новой таблицы.
+
+    Возвращает True если разрезали, иначе False.
+    """
+
+    target_tbl: Optional[Table] = None
+    results_row_idx: Optional[int] = None
+
+    for t in doc.tables:
+        if not _tbl_looks_like_test11_results(t):
+            continue
+
+        # ищем строку "Результаты испытания"
+        for ri, row in enumerate(t.rows):
+            row_text = _norm(" ".join(c.text for c in row.cells))
+            if _norm(results_row_text) == row_text or _norm(results_row_text) in row_text:
+                target_tbl = t
+                results_row_idx = ri
+                break
+
+        if target_tbl is not None:
+            break
+
+    if target_tbl is None or results_row_idx is None:
+        return False
+
+    split_row_idx = results_row_idx + 1  # <-- строка после "Результаты испытания"
+    if split_row_idx >= len(target_tbl.rows):
+        return False
+
+    tbl_el = target_tbl._tbl
+    tr_elems = tbl_el.xpath("./w:tr")
+    if len(tr_elems) != len(target_tbl.rows):
+        return False
+
+    # создаём новую таблицу как копию
+    new_tbl_el = deepcopy(tbl_el)
+    new_tr_elems = new_tbl_el.xpath("./w:tr")
+
+    # в новой таблице удаляем всё ДО split_row_idx
+    for i in range(split_row_idx - 1, -1, -1):
+        new_tbl_el.remove(new_tr_elems[i])
+
+    # в старой таблице удаляем всё Начиная с split_row_idx
+    for i in range(len(tr_elems) - 1, split_row_idx - 1, -1):
+        tbl_el.remove(tr_elems[i])
+
+    # вставляем новую таблицу сразу после старой
+    tbl_el.addnext(new_tbl_el)
+
+    # делаем повтор шапки на новой таблице (теперь шапка = первые строки)
+    _set_repeat_header_rows_on_tbl_el(new_tbl_el, header_rows)
+
+    return True
+
+
+
+# word_update_all.py
+from __future__ import annotations
+
+import re
+from typing import Optional
+
+import win32com.client as win32
+from win32com.client import constants as c
+
+
+def _clean_text(s: str) -> str:
+    # Word часто возвращает текст с '\r\x07'
+    s = s.replace("\r", "").replace("\x07", "")
+    s = s.replace("\u00A0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _norm(s: str) -> str:
+    s = _clean_text(s).lower()
+    return s.replace("ё", "е")
+
+
+def _table_text_first_rows(tbl, rows: int = 3) -> str:
+    """Собираем текст первых N строк таблицы одним куском."""
+    rows = min(rows, int(tbl.Rows.Count))
+    parts = []
+    for i in range(1, rows + 1):
+        try:
+            r = tbl.Rows(i)
+            for cell in r.Cells:
+                parts.append(_clean_text(cell.Range.Text))
+        except Exception:
+            continue
+    return " ".join(parts)
+
+
+def _looks_like_test11_3_table(tbl) -> bool:
+    """
+    Узнаём таблицу "Тест 11.3 Проверка расхода приточного воздуха" по шапке:
+    'Фильтр', 'Скорость потока', 'Расход приточного воздуха', 'Соответствует'
+    (и обычно встречается 'ДА'/'НЕТ').
+    """
+    try:
+        if int(tbl.Rows.Count) < 2:
+            return False
+        head = _norm(_table_text_first_rows(tbl, rows=3))
+        return (
+            ("фильтр" in head)
+            and ("скорост" in head)          # скорость/скорости
+            and ("расход" in head)
+            and ("приточ" in head)           # приточного
+            and ("соответ" in head)          # соответствует
+        )
+    except Exception:
+        return False
+
+
+def _set_repeat_header(tbl, header_rows_count: int) -> None:
+    """
+    Делает первые header_rows_count строк повторяемыми как шапку на каждой странице.
+    """
+    header_rows_count = max(1, header_rows_count)
+    max_rows = int(tbl.Rows.Count)
+    header_rows_count = min(header_rows_count, max_rows)
+
+    # На всякий: чтобы Word не разрывал строки (особенно шапку) пополам
+    try:
+        tbl.Rows.AllowBreakAcrossPages = True  # данные можно, если нужно
+    except Exception:
+        pass
+
+    for i in range(1, header_rows_count + 1):
+        try:
+            tbl.Rows(i).HeadingFormat = True
+        except Exception:
+            pass
+        try:
+            tbl.Rows(i).AllowBreakAcrossPages = False
+        except Exception:
+            pass
+
+
+def enforce_test11_3_header_each_page(docx_path: str, header_rows_count: int = 2) -> int:
+    """
+    Находит все таблицы формата Тест 11.3 и включает повтор шапки на каждой странице.
+    Возвращает количество найденных/исправленных таблиц.
+    """
+    word = win32.gencache.EnsureDispatch("Word.Application")
+    word.Visible = False
+
+    changed = 0
+    try:
+        doc = word.Documents.Open(str(docx_path))
+        doc.Repaginate()
+
+        for tbl in doc.Tables:
+            if _looks_like_test11_3_table(tbl):
+                _set_repeat_header(tbl, header_rows_count=header_rows_count)
+                changed += 1
+
+        if changed:
+            doc.Save()
+        doc.Close()
+        return changed
+    finally:
+        word.Quit()
+
+
+def update_all_fields_toc_headers(docx_path: str) -> None:
+    """
+    Полное обновление:
+    - Repaginate
+    - Fields.Update()
+    - обновление полей в колонтитулах
+    - обновление содержания (TOC), если есть
+    """
+    word = win32.gencache.EnsureDispatch("Word.Application")
+    word.Visible = False
+    try:
+        doc = word.Documents.Open(str(docx_path))
+        doc.Repaginate()
+
+        # 1) Обновить поля в основном тексте
+        try:
+            doc.Fields.Update()
+        except Exception:
+            pass
+
+        # 2) Колонтитулы
+        for sec in doc.Sections:
+            for hf_idx in (1, 2, 3):  # 1=Primary, 2=FirstPage, 3=EvenPages
+                try:
+                    sec.Headers(hf_idx).Range.Fields.Update()
+                except Exception:
+                    pass
+                try:
+                    sec.Footers(hf_idx).Range.Fields.Update()
+                except Exception:
+                    pass
+
+        # 3) Содержание (TOC)
+        try:
+            if doc.TablesOfContents.Count >= 1:
+                # Если TOC несколько — обновим все
+                for i in range(1, doc.TablesOfContents.Count + 1):
+                    try:
+                        doc.TablesOfContents(i).Update()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # 4) Ещё разок для пересчёта NUMPAGES после всех вставок/разрывов
+        doc.Repaginate()
+        try:
+            doc.Fields.Update()
+        except Exception:
+            pass
+
+        doc.Save()
+        doc.Close()
+    finally:
+        word.Quit()
+
+
+def finalize_docx(docx_path: str, *, test11_3_header_rows: int = 2) -> None:
+    """
+    Один вызов на финализацию документа:
+    - сделать повтор шапки в таблице Тест 11.3 (на каждой странице)
+    - обновить TOC/поля/колонтитулы (NUMPAGES/страницы в содержании)
+    """
+    enforce_test11_3_header_each_page(docx_path, header_rows_count=test11_3_header_rows)
+    update_all_fields_toc_headers(docx_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
