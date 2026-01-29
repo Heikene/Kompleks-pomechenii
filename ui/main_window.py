@@ -1375,6 +1375,7 @@ class RenderWorker(QThread):
             out_report_path: str | None = None,
             ctx_fields_report: dict | None = None,
             xls_report_path: str | None = None,
+            report_code: str | None = None,  # <-- ДОБАВИЛИ
     ):
         super().__init__()
 
@@ -1394,10 +1395,11 @@ class RenderWorker(QThread):
         self.app4_images = app4_images or []
         self.app5_images = app5_images or []
 
-        # NEW:
         self.tpl_report_path = tpl_report_path
         self.out_report_path = out_report_path
         self.ctx_fields_report = ctx_fields_report
+
+        self.report_code = (report_code or "").upper()  # <-- ДОБАВИЛИ
 
     def run(self):
         missing: list[str] = []
@@ -1411,7 +1413,7 @@ class RenderWorker(QThread):
             io_manager.validate_file(Path(self.risk_path))
             Path(self.out_path).parent.mkdir(parents=True, exist_ok=True)
 
-            # второй документ (ОТЧ-OQ) — опционально
+            # второй документ (ОТЧ-<code>) — опционально
             do_report = bool(self.tpl_report_path and self.out_report_path and self.ctx_fields_report is not None)
             if do_report:
                 io_manager.validate_file(Path(self.tpl_report_path))
@@ -1420,7 +1422,11 @@ class RenderWorker(QThread):
                 if self.xls_report_path:
                     io_manager.validate_file(Path(self.xls_report_path))
                 else:
-                    logger.warning("ОТЧ-OQ: не указан Excel-файл с данными для Таблицы 2.")
+                    logger.warning(
+                        f"ОТЧ-{getattr(self, 'report_code', '')}: не указан Excel-файл с данными для Таблицы 2.")
+            else:
+                # если отчёт не включен, report_code может быть пустым — это норм
+                pass
 
             # ---------- 1. Базовый контекст ----------
             step += 1
@@ -1447,7 +1453,7 @@ class RenderWorker(QThread):
                     found = None
                     for root, _, files in os.walk(self.scans_dir):
                         for fn in files:
-                            # pdf пропускаем как картинку
+                            # pdf пропускаем как картинку (InlineImage не умеет PDF)
                             if Path(fn).suffix.lower() not in (".jpg", ".jpeg", ".png", ".pdf"):
                                 continue
                             if _serial_key(Path(fn).stem) == key:
@@ -1627,14 +1633,6 @@ class RenderWorker(QThread):
                     self.progress.emit(step, "Вставка тестовых таблиц…")
                     missing = table_processor.insert_test_tables(doc, tmp_tests_path, self.selected_tests)
 
-                    # import word_repeat_headers  # вверху файла или прямо перед вызовом
-                    #
-                    # word_repeat_headers.split_test_results_table(
-                    #     doc,
-                    #     split_phrase="Результаты испытания",
-                    #     header_rows=2,  # у вас на скрине 2 строки шапки колонок
-                    # )
-
                     # ---------- 10. Таблица 5 ----------
                     step += 1
                     self.progress.emit(step, "Вставка Таблицы 5 (анализ рисков)…")
@@ -1658,12 +1656,6 @@ class RenderWorker(QThread):
                         table_must_contain="Проверка расхода приточного воздуха",
                     )
 
-                    # # после заполнения результатов
-                    # try:
-                    #     # word_test11_splitter.split_after_results_and_repeat_header(doc, header_rows=2)
-                    # except Exception as e:
-                    #     logger.warning(f"Не удалось разрезать таблицу теста 11 / повторить шапку: {e}")
-
                     step += 1
                     self.progress.emit(step, "Унификация шрифта…")
                     table_processor.enforce_tnr_face_only_everywhere(doc)
@@ -1674,23 +1666,26 @@ class RenderWorker(QThread):
                     except Exception as e:
                         logger.warning(f"Не удалось применить стиль 'Table Grid': {e}")
 
-                    # ---------- 12. Сохранение ----------
+                    # ---------- 12. Сохранение основного документа ----------
                     step += 1
                     self.progress.emit(step, "Сохранение…")
                     doc.save(self.out_path)
 
+                # обновление полей/колонтитулов + разрезание таблицы 5 через Word (если нужно)
                 try:
                     word_table5_splitter.update_fields_with_word(self.out_path)
                 except Exception as e:
                     logger.warning(f"Не удалось обновить поля/разрезать таблицу 5 через Word: {e}")
 
-                # ---------- 13. Рендер ОТЧ-OQ ----------
+                # ---------- 13. Рендер ОТЧ-<code> ----------
                 if do_report:
+                    rep = (getattr(self, "report_code", "") or "").upper()
+                    rep = rep if rep else "ОТЧ"
+
                     step += 1
-                    self.progress.emit(step, "Рендер ОТЧ-OQ…")
+                    self.progress.emit(step, f"Рендер {rep}…")
 
                     context_r = template_renderer.build_context(self.ctx_fields_report, self.rooms)
-
                     if scan_paths:
                         context_r["Scan_paths"] = scan_paths
 
@@ -1711,7 +1706,7 @@ class RenderWorker(QThread):
                         ok1 = fill_report_table1_rooms_by_hashes(doc_r, self.rooms)
                         if not ok1:
                             logger.warning(
-                                "ОТЧ-OQ: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
+                                f"{rep}: Таблица 1 с маркерами #/##/... не найдена — помещения не заполнены.")
 
                         # 2) Таблица 2 (из Excel по выбранным тестам)
                         if self.xls_report_path:
@@ -1722,39 +1717,41 @@ class RenderWorker(QThread):
                                 default_eval="Соответствует",
                             )
                             if not ok2:
-                                logger.warning("ОТЧ-OQ: Таблица 2 не найдена (по заголовку/маркерам).")
+                                logger.warning(f"{rep}: Таблица 2 не найдена (по заголовку/маркерам).")
                             if missing2:
-                                logger.warning("ОТЧ-OQ: в Excel нет строк для тестов:\n" + "\n".join(missing2))
+                                logger.warning(f"{rep}: в Excel нет строк для тестов:\n" + "\n".join(missing2))
                         else:
-                            logger.warning("ОТЧ-OQ: Excel отчёта ОТЧ-OQ не задан — Таблица 2 не заполнена.")
+                            logger.warning(f"{rep}: Excel отчёта не задан — Таблица 2 не заполнена.")
 
-                        # 3) Исправление разрыва: "Таблица 2" приклеить к следующей таблице
+                        # 3) "Таблица 2" приклеить к следующей таблице
                         try:
-                            fix_table2_caption_glue(doc_r)  # <-- ВАЖНО: функция должна быть определена
+                            fix_table2_caption_glue(doc_r)
                         except Exception as e:
-                            logger.warning(f"ОТЧ-OQ: не удалось применить fix_table2_caption_glue: {e}")
+                            logger.warning(f"{rep}: не удалось применить fix_table2_caption_glue: {e}")
 
-                        # 4) Сохранение один раз
+                        # 4) Сохранение
                         doc_r.save(self.out_report_path)
 
-                    # если надо обновлять поля/колонтитулы через Word — можно оставить
                     # Таблица 2: деление по странице + "Продолжение таблицы 2" + обновление полей
                     try:
                         word_table2_otch_splitter.update_fields_and_split_table2(self.out_report_path)
                     except Exception as e:
-                        logger.warning(f"ОТЧ-OQ: не удалось разрезать Таблицу 2 / обновить поля через Word: {e}")
+                        logger.warning(f"{rep}: не удалось разрезать Таблицу 2 / обновить поля через Word: {e}")
 
-                    # ✅ финальный проход: обновить ВСЁ (PAGE/NUMPAGES + TOC + поля)
+                    # финальный проход: обновить ВСЁ (PAGE/NUMPAGES + TOC + поля)
                     try:
                         import word_update_all
                         word_update_all.update_all(self.out_report_path)
                     except Exception as e:
-                        logger.warning(f"ОТЧ-OQ: не удалось обновить все поля/содержание через Word: {e}")
+                        logger.warning(f"{rep}: не удалось обновить все поля/содержание через Word: {e}")
 
-            msg = f"Документ сохранён:\n{self.out_path}"
-            if do_report and self.out_report_path:
-                msg += f"\n\nОТЧ-OQ сохранён:\n{self.out_report_path}"
-            self.finished.emit(True, msg, missing)
+                msg = f"Документ сохранён:\n{self.out_path}"
+                if do_report and self.out_report_path:
+                    rep = (getattr(self, "report_code", "") or "").upper()
+                    rep = f"ОТЧ-{rep}" if rep else "ОТЧ"
+                    msg += f"\n\n{rep} сохранён:\n{self.out_report_path}"
+
+                self.finished.emit(True, msg, missing)
 
         except Exception as e:
             logger.exception("Ошибка в RenderWorker:")
@@ -1946,7 +1943,7 @@ class MainWindow(QMainWindow):
         row += 1
 
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 12)
+        self.progress_bar.setRange(0, 20)
         g.addWidget(self.progress_bar, row, 0, 1, 3)
         row += 1
 
@@ -2218,27 +2215,28 @@ class MainWindow(QMainWindow):
 
         out_path = out_base.with_name(out_base.stem + f"_{mode}.docx")
 
-        # ---------- ОТЧ-OQ генерируем ТОЛЬКО вместе с OQ ----------
+        # ---------- ОТЧ (для текущего mode) ----------
         base = Path(__file__).resolve().parents[1]
         tpl_report_path = None
         out_report_path = None
         ctx_fields_report = None
         xls_report_path = None
 
-        if mode == "OQ":
-            # шаблон отчёта лежит в корне проекта
-            candidate_tpl = base / "Шаблон ОТЧ-OQ.docx"
+        if mode in ("OQ", "PQ"):
+            report_code = mode  # "OQ" или "PQ"
+
+            candidate_tpl = base / f"Шаблон ОТЧ-{report_code}.docx"
             if candidate_tpl.exists():
                 tpl_report_path = str(candidate_tpl)
-                out_report_path = str(out_base.with_name(out_base.stem + f"_{mode}_ОТЧ-OQ.docx"))
+                out_report_path = str(out_base.with_name(out_base.stem + f"_{mode}_ОТЧ-{report_code}.docx"))
             else:
-                logger.warning(f"Шаблон отчёта ОТЧ-OQ не найден: {candidate_tpl}")
+                logger.warning(f"Шаблон отчёта ОТЧ-{report_code} не найден: {candidate_tpl}")
 
-            candidate_xls = base / "ОТЧ-OQ.xlsx"  # имя файла поменяй под свой
+            candidate_xls = base / f"ОТЧ-{report_code}.xlsx"
             if candidate_xls.exists():
                 xls_report_path = str(candidate_xls)
             else:
-                logger.warning(f"Excel отчёта ОТЧ-OQ не найден: {candidate_xls}")
+                logger.warning(f"Excel отчёта ОТЧ-{report_code} не найден: {candidate_xls}")
 
         missing_fields = []
         if not tpl_path:
@@ -2274,20 +2272,23 @@ class MainWindow(QMainWindow):
 
         doc_id = _norm_doc_id(self.prt_input.text())
 
-        # для основного документа (OQ/PQ)
-        prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+        # основной документ (OQ/PQ): {{prt}} = ПРТ-<ввод>
+        prt = RichText(
+            f"ПРТ-{doc_id}" if doc_id else "",
+            bold=False, italic=False, underline=False
+        )
 
-        # для отчёта ОТЧ-OQ
-        prt_report = RichText(f"ОТЧ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+        # отчёт ОТЧ-(OQ/PQ): {{prt}} = ОТЧ-<mode>-<ввод>
+        prt_report = RichText(
+            f"ОТЧ-{mode}-{doc_id}" if doc_id else "",
+            bold=False, italic=False, underline=False
+        )
 
-        # ✅ ВОТ ЭТО ДОБАВЬ: для {{prt1}} в Шаблон ОТЧ-OQ.docx
-        prt1_report = RichText(f"ПРТ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
-
-        # для основного документа (OQ/PQ): {{prt}} = ПРТ-<ввод>
-        prt = RichText(f"ПРТ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
-
-        # для отчёта ОТЧ-OQ: {{prt}} = ОТЧ-OQ-<ввод>
-        prt_report = RichText(f"ОТЧ-OQ-{doc_id}" if doc_id else "", bold=False, italic=False, underline=False)
+        # отчёт: {{prt1}} = ПРТ-<mode>-<ввод>
+        prt1_report = RichText(
+            f"ПРТ-{mode}-{doc_id}" if doc_id else "",
+            bold=False, italic=False, underline=False
+        )
 
         object_text = self.object_input.text().strip()
         object_rd = ""
@@ -2338,7 +2339,8 @@ class MainWindow(QMainWindow):
             "Тесты_маркированным_списком": RichText("\n".join(f"• {t}" for t in sel_tests), bold=False),
         }
 
-        if mode == "OQ" and tpl_report_path and out_report_path:
+        # контекст для отчёта (только если реально есть шаблон и путь)
+        if mode in ("OQ", "PQ") and tpl_report_path and out_report_path:
             ctx_fields_report = dict(ctx_fields)
             ctx_fields_report["prt"] = prt_report
             ctx_fields_report["prt1"] = prt1_report
@@ -2355,11 +2357,12 @@ class MainWindow(QMainWindow):
             app4_images=app4_images,
             app5_images=app5_images,
 
-            # ОТЧ-OQ (только для OQ):
+            # ОТЧ (для текущего mode)
             tpl_report_path=tpl_report_path,
             out_report_path=out_report_path,
             ctx_fields_report=ctx_fields_report,
             xls_report_path=xls_report_path,
+            report_code=mode,
         )
 
         self.worker.progress.connect(self.on_progress)

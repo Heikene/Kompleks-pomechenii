@@ -8410,3 +8410,165 @@ AttributeError: module 'word_repeat_headers' has no attribute 'split_test_result
 2026-01-25 23:41:49,178 INFO: Table5 split: выполнено.
 2026-01-25 23:41:55,185 DEBUG: Контекст для Jinja собран (rooms с point)
 2026-01-25 23:42:03,963 WARNING: ОТЧ-OQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
+2026-01-28 08:37:14,376 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-28 08:37:14,544 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 08:37:14,588 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 08:37:14,650 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 08:37:14,661 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 09:18:53,234 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-28 09:18:53,270 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 09:18:53,279 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 09:18:53,295 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 09:18:53,300 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:17:31,116 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-28 10:17:31,153 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:17:31,163 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:17:31,183 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:17:31,189 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:17:33,526 DEBUG: Загружено тестов: 4 из tests PQ.xlsx
+2026-01-28 10:17:33,559 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:17:33,568 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:17:33,584 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:17:33,589 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:17:49,789 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:17:49,796 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:17:49,810 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:17:49,814 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:19:33,954 WARNING: Excel отчёта ОТЧ-PQ не найден: C:\Users\pha-z\Desktop\doc_generator_app\ОТЧ-PQ.xlsx
+2026-01-28 10:19:34,333 WARNING: ОТЧ-PQ: не указан Excel-файл с данными для Таблицы 2.
+2026-01-28 10:19:34,334 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 10:19:34,745 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\pha-z\Desktop\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 486, in render
+    xml_src = self.build_xml(context, jinja_env)
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 433, in build_xml
+    xml = self.render_xml_part(xml, self.docx._part, context, jinja_env)
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 319, in render_xml_part
+    raise exc
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 309, in render_xml_part
+    template = Template(src_xml)
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 1214, in __new__
+    return env.from_string(source, template_class=cls)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 1111, in from_string
+    return cls.from_code(self, self.compile(source), gs, None)
+                               ~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 771, in compile
+    self.handle_exception(source=source_hint)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "<unknown>", line 790, in template
+jinja2.exceptions.TemplateSyntaxError: Unexpected end of template. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.
+2026-01-28 10:34:34,070 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-28 10:34:34,108 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:34:34,118 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:34:34,137 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:34:34,142 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:34:50,791 DEBUG: Загружено тестов: 4 из tests PQ.xlsx
+2026-01-28 10:34:50,823 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:34:50,831 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:34:50,847 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:34:50,852 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:35:19,643 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:35:19,651 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:35:19,666 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:35:19,671 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:35:27,417 WARNING: Excel отчёта ОТЧ-PQ не найден: C:\Users\pha-z\Desktop\doc_generator_app\ОТЧ-PQ.xlsx
+2026-01-28 10:35:27,481 WARNING: ОТЧ-PQ: не указан Excel-файл с данными для Таблицы 2.
+2026-01-28 10:35:27,482 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 10:35:27,871 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\pha-z\Desktop\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 486, in render
+    xml_src = self.build_xml(context, jinja_env)
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 433, in build_xml
+    xml = self.render_xml_part(xml, self.docx._part, context, jinja_env)
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 319, in render_xml_part
+    raise exc
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 309, in render_xml_part
+    template = Template(src_xml)
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 1214, in __new__
+    return env.from_string(source, template_class=cls)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 1111, in from_string
+    return cls.from_code(self, self.compile(source), gs, None)
+                               ~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 771, in compile
+    self.handle_exception(source=source_hint)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\pha-z\Desktop\doc_generator_app\.venv\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "<unknown>", line 785, in template
+jinja2.exceptions.TemplateSyntaxError: Unexpected end of template. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.
+2026-01-28 10:49:29,554 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-28 10:49:29,592 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:49:29,601 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:49:29,618 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:49:29,623 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:49:38,395 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:49:38,404 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:49:38,420 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:49:38,424 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:49:41,650 DEBUG: Загружено тестов: 4 из tests PQ.xlsx
+2026-01-28 10:49:41,688 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:49:41,696 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:49:41,713 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:49:41,717 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:49:47,972 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 10:49:47,980 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 10:49:47,996 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 10:49:48,000 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 10:50:19,031 WARNING: Excel отчёта ОТЧ-PQ не найден: C:\Users\pha-z\Desktop\doc_generator_app\ОТЧ-PQ.xlsx
+2026-01-28 10:50:19,100 WARNING: ОТЧ-PQ: не указан Excel-файл с данными для Таблицы 2.
+2026-01-28 10:50:19,101 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 10:50:20,652 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 10:50:24,221 DEBUG: Начинаем process_rooms_table
+2026-01-28 10:50:24,249 DEBUG: process_rooms_table выполнен
+2026-01-28 10:50:24,249 DEBUG: Начинаем process_equipment_table
+2026-01-28 10:50:24,282 DEBUG: process_equipment_table выполнен
+2026-01-28 10:50:25,199 WARNING: Таблица 5 не вставлена: Не найдена Таблица 5: нет строки с <<T5_RISK>>.
+2026-01-28 10:50:25,200 DEBUG: Начинаем process_test_results_tables
+2026-01-28 10:50:25,339 DEBUG: process_test_results_tables завершён
+2026-01-28 10:50:29,387 INFO: Table5 split: всего таблиц в документе: 26
+2026-01-28 10:50:30,067 WARNING: Table5 split: Таблица 5 не найдена — пропускаем.
+2026-01-28 10:50:34,023 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 10:50:34,223 WARNING: PQ: Excel отчёта не задан — Таблица 2 не заполнена.
+2026-01-28 10:50:36,046 WARNING: PQ: не удалось разрезать Таблицу 2 / обновить поля через Word: (-2147417846, 'Фильтр сообщений выдал диагностику о занятости приложения.', None, None)
+2026-01-28 10:50:36,107 WARNING: PQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
+2026-01-28 20:57:38,677 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-28 20:57:38,707 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 20:57:38,715 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 20:57:38,733 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 20:57:38,740 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 20:57:45,244 DEBUG: Загружено тестов: 4 из tests PQ.xlsx
+2026-01-28 20:57:45,281 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 20:57:45,289 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 20:57:45,304 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 20:57:45,308 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 21:05:41,229 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-28 21:05:41,237 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-28 21:05:41,253 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-28 21:05:41,258 DEBUG: [СИ] загружено 11 позиций
+2026-01-28 21:06:17,382 WARNING: Excel отчёта ОТЧ-PQ не найден: C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ОТЧ-PQ.xlsx
+2026-01-28 21:06:17,463 WARNING: ОТЧ-PQ: не указан Excel-файл с данными для Таблицы 2.
+2026-01-28 21:06:17,463 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 21:06:18,603 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 21:06:22,883 DEBUG: Начинаем process_rooms_table
+2026-01-28 21:06:22,905 DEBUG: process_rooms_table выполнен
+2026-01-28 21:06:22,906 DEBUG: Начинаем process_equipment_table
+2026-01-28 21:06:22,933 DEBUG: process_equipment_table выполнен
+2026-01-28 21:06:23,622 WARNING: Таблица 5 не вставлена: Не найдена Таблица 5: нет строки с <<T5_RISK>>.
+2026-01-28 21:06:23,622 DEBUG: Начинаем process_test_results_tables
+2026-01-28 21:06:23,740 DEBUG: process_test_results_tables завершён
+2026-01-28 21:06:26,258 INFO: Table5 split: всего таблиц в документе: 26
+2026-01-28 21:06:26,831 WARNING: Table5 split: Таблица 5 не найдена — пропускаем.
+2026-01-28 21:06:30,499 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-28 21:06:30,831 WARNING: PQ: Excel отчёта не задан — Таблица 2 не заполнена.
+2026-01-28 21:06:34,293 WARNING: PQ: не удалось разрезать Таблицу 2 / обновить поля через Word: This COM object can not automate the makepy process - please run makepy manually for this object
+2026-01-28 21:06:34,294 WARNING: PQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
