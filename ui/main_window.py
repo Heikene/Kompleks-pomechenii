@@ -1267,8 +1267,8 @@ def fix_table2_caption_glue(doc: DocxDocument, caption: str = "Таблица 2"
     2) Делает таблицу inline (убирает tblpPr/tblOverlap)
     3) КЛЮЧЕВОЕ: ставит keepNext на абзац подписи, чтобы Word не оставлял подпись сиротой
     """
-    from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
 
     def norm(s: str) -> str:
         s = (s or "").replace("\u00A0", " ")

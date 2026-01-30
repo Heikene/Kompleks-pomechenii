@@ -70,3 +70,25 @@
 2026-01-22 14:17:28,371 DEBUG: Контекст для Jinja собран (rooms с point)
 2026-01-22 14:17:31,436 INFO: Table5 split: всего таблиц в документе: 12
 2026-01-22 14:17:31,688 WARNING: Table5 split: Таблица 5 не найдена — пропускаем.
+2026-01-29 19:38:48,087 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-29 19:38:48,135 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-29 19:38:48,147 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-29 19:38:48,167 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-29 19:38:48,172 DEBUG: [СИ] загружено 11 позиций
+2026-01-29 19:38:53,089 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-29 19:38:53,098 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-29 19:38:53,116 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-29 19:38:53,120 DEBUG: [СИ] загружено 11 позиций
+2026-01-29 19:39:06,793 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-29 19:39:08,477 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'

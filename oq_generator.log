@@ -8572,3 +8572,160 @@ jinja2.exceptions.TemplateSyntaxError: Unexpected end of template. Jinja was loo
 2026-01-28 21:06:30,831 WARNING: PQ: Excel отчёта не задан — Таблица 2 не заполнена.
 2026-01-28 21:06:34,293 WARNING: PQ: не удалось разрезать Таблицу 2 / обновить поля через Word: This COM object can not automate the makepy process - please run makepy manually for this object
 2026-01-28 21:06:34,294 WARNING: PQ: не удалось обновить все поля/содержание через Word: module 'word_update_all' has no attribute 'update_all'
+2026-01-29 19:26:16,230 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-29 19:26:16,265 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-29 19:26:16,277 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-29 19:26:16,304 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-29 19:26:16,309 DEBUG: [СИ] загружено 11 позиций
+2026-01-29 19:26:20,541 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-29 19:26:20,551 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-29 19:26:20,575 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-29 19:26:20,579 DEBUG: [СИ] загружено 11 позиций
+2026-01-29 19:32:17,995 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-29 19:32:18,004 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-29 19:32:18,023 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-29 19:32:18,028 DEBUG: [СИ] загружено 11 позиций
+2026-01-29 19:34:39,102 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-29 19:34:41,451 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
+2026-01-29 19:38:37,552 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-29 19:38:39,840 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
+2026-01-30 19:28:08,557 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-30 19:28:08,594 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 19:28:08,604 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 19:28:08,623 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 19:28:08,628 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 19:28:18,310 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 19:28:18,320 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 19:28:18,342 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 19:28:18,347 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 19:28:35,390 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-30 19:28:37,961 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
+2026-01-30 19:36:57,814 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-30 19:36:57,847 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 19:36:57,868 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 19:36:57,885 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 19:36:57,890 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 19:37:09,571 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 19:37:09,579 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 19:37:09,599 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 19:37:09,604 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 19:37:19,648 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-30 19:37:21,293 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
+2026-01-30 20:10:06,784 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-30 20:10:06,822 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 20:10:06,848 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 20:10:06,868 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 20:10:06,874 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 20:10:08,597 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 20:10:08,614 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 20:10:08,637 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 20:10:08,642 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 20:10:26,314 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-30 20:10:28,015 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
+2026-01-30 23:09:33,029 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-30 23:09:33,068 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 23:09:33,077 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 23:09:33,095 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 23:09:33,100 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 23:09:41,954 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-30 23:09:41,962 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-30 23:09:41,979 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-30 23:09:41,983 DEBUG: [СИ] загружено 11 позиций
+2026-01-30 23:09:51,190 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-30 23:09:52,891 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
+2026-01-31 00:24:51,027 DEBUG: Загружено тестов: 15 из tests OQ.xlsx
+2026-01-31 00:24:51,070 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-31 00:24:51,082 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-31 00:24:51,106 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-31 00:24:51,111 DEBUG: [СИ] загружено 11 позиций
+2026-01-31 00:24:53,308 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-31 00:24:53,322 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-31 00:24:53,343 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-31 00:24:53,348 DEBUG: [СИ] загружено 11 позиций
+2026-01-31 00:24:56,329 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-31 00:24:56,341 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-31 00:24:56,365 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-31 00:24:56,372 DEBUG: [СИ] загружено 11 позиций
+2026-01-31 00:27:57,273 DEBUG: [Оборудование] загружено 44 позиций
+2026-01-31 00:27:57,290 DEBUG: [Преобразователи] загружено 66 позиций
+2026-01-31 00:27:57,311 DEBUG: [Беспроводные измерители] загружено 143 позиций
+2026-01-31 00:27:57,316 DEBUG: [СИ] загружено 11 позиций
+2026-01-31 00:28:09,660 DEBUG: Контекст для Jinja собран (rooms с point)
+2026-01-31 00:28:11,635 ERROR: Ошибка в RenderWorker:
+Traceback (most recent call last):
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\ui\main_window.py", line 1473, in run
+    tpl_tests.render(context)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 512, in render
+    self.render_footnotes(context, jinja_env)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Руфан\Desktop\Проекты\doc_generator_app\.venv\Lib\site-packages\docxtpl\template.py", line 367, in render_footnotes
+    for part in section.part.package.parts:
+                ^^^^^^^^^^^^
+AttributeError: 'Section' object has no attribute 'part'
